@@ -1,3 +1,5 @@
+# Based on homeassistant/components/kodi from Home Assistant Core 2026.10.2
+# (Apache-2.0). Modified for Better Kodi; see NOTICE and the git history.
 """Config flow for Kodi integration."""
 
 import logging

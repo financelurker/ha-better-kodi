@@ -1,8 +1,12 @@
+# Based on tests/components/kodi from Home Assistant Core 2026.10.2
+# (Apache-2.0). Modified for Better Kodi; see NOTICE and the git history.
 """Tests for the Kodi integration."""
 
 from unittest.mock import patch
 
-from homeassistant.components.kodi.const import CONF_WS_PORT, DOMAIN
+from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+from custom_components.better_kodi.const import CONF_WS_PORT, DOMAIN
 from homeassistant.const import (
     CONF_HOST,
     CONF_NAME,
@@ -14,8 +18,6 @@ from homeassistant.const import (
 from homeassistant.core import HomeAssistant
 
 from .util import MockConnection
-
-from tests.common import MockConfigEntry
 
 
 async def init_integration(hass: HomeAssistant) -> MockConfigEntry:
@@ -33,13 +35,13 @@ async def init_integration(hass: HomeAssistant) -> MockConfigEntry:
     entry.add_to_hass(hass)
 
     with (
-        patch("homeassistant.components.kodi.Kodi.ping", return_value=True),
+        patch("custom_components.better_kodi.Kodi.ping", return_value=True),
         patch(
-            "homeassistant.components.kodi.Kodi.get_application_properties",
+            "custom_components.better_kodi.Kodi.get_application_properties",
             return_value={"version": {"major": 1, "minor": 1}},
         ),
         patch(
-            "homeassistant.components.kodi.get_kodi_connection",
+            "custom_components.better_kodi.get_kodi_connection",
             return_value=MockConnection(),
         ),
     ):

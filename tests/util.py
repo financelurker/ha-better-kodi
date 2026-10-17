@@ -1,8 +1,10 @@
+# Based on tests/components/kodi from Home Assistant Core 2026.10.2
+# (Apache-2.0). Modified for Better Kodi; see NOTICE and the git history.
 """Test the Kodi config flow."""
 
 from ipaddress import ip_address
 
-from homeassistant.components.kodi.const import DEFAULT_SSL
+from custom_components.better_kodi.const import DEFAULT_SSL
 from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 
 TEST_HOST = {

@@ -1,3 +1,5 @@
+# Based on homeassistant/components/kodi from Home Assistant Core 2026.10.2
+# (Apache-2.0). Modified for Better Kodi; see NOTICE and the git history.
 """Support for interfacing with the XBMC/Kodi JSON-RPC API."""
 
 from collections.abc import Awaitable, Callable, Coroutine
@@ -46,7 +48,7 @@ from .const import DOMAIN, EVENT_TURN_OFF, EVENT_TURN_ON
 
 _LOGGER = logging.getLogger(__name__)
 
-EVENT_KODI_CALL_METHOD_RESULT = "kodi_call_method_result"
+EVENT_KODI_CALL_METHOD_RESULT = "better_kodi_call_method_result"
 
 WEBSOCKET_WATCHDOG_INTERVAL = timedelta(seconds=10)
 
@@ -92,13 +94,13 @@ async def async_setup_entry(
     async_add_entities([entity])
 
 
-def cmd[_KodiEntityT: KodiEntity, **_P](
-    func: Callable[Concatenate[_KodiEntityT, _P], Awaitable[Any]],
-) -> Callable[Concatenate[_KodiEntityT, _P], Coroutine[Any, Any, None]]:
+def cmd[KodiEntityT: KodiEntity, **P](
+    func: Callable[Concatenate[KodiEntityT, P], Awaitable[Any]],
+) -> Callable[Concatenate[KodiEntityT, P], Coroutine[Any, Any, None]]:
     """Catch command exceptions."""
 
     @wraps(func)
-    async def wrapper(obj: _KodiEntityT, *args: _P.args, **kwargs: _P.kwargs) -> None:
+    async def wrapper(obj: KodiEntityT, *args: P.args, **kwargs: P.kwargs) -> None:
         """Wrap all command methods."""
         try:
             await func(obj, *args, **kwargs)
@@ -697,7 +699,7 @@ class KodiEntity(MediaPlayerEntity):
                 "result_ok": result_ok,
                 "input": {"method": method, "params": kwargs},
             }
-            _LOGGER.debug("EVENT kodi_call_method_result: %s", event_data)
+            _LOGGER.debug("EVENT better_kodi_call_method_result: %s", event_data)
             self.hass.bus.async_fire(
                 EVENT_KODI_CALL_METHOD_RESULT, event_data=event_data
             )

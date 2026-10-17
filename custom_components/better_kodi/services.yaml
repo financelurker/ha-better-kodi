@@ -3,7 +3,7 @@
 add_to_playlist:
   target:
     entity:
-      integration: kodi
+      integration: better_kodi
       domain: media_player
   fields:
     media_type:
@@ -27,7 +27,7 @@ add_to_playlist:
 call_method:
   target:
     entity:
-      integration: kodi
+      integration: better_kodi
       domain: media_player
   fields:
     method:

@@ -1,15 +1,18 @@
+# Based on tests/components/kodi from Home Assistant Core 2026.10.2
+# (Apache-2.0). Modified for Better Kodi; see NOTICE and the git history.
 """Test the Kodi config flow."""
 
 from unittest.mock import AsyncMock, PropertyMock, patch
 
 import pytest
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from homeassistant import config_entries
-from homeassistant.components.kodi.config_flow import (
+from custom_components.better_kodi.config_flow import (
     CannotConnectError,
     InvalidAuthError,
 )
-from homeassistant.components.kodi.const import DEFAULT_TIMEOUT, DOMAIN
+from custom_components.better_kodi.const import DEFAULT_TIMEOUT, DOMAIN
+from homeassistant import config_entries
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 
@@ -24,8 +27,6 @@ from .util import (
     MockWSConnection,
     get_kodi_connection,
 )
-
-from tests.common import MockConfigEntry
 
 
 @pytest.fixture
@@ -44,15 +45,15 @@ async def test_user_flow(hass: HomeAssistant, user_flow: str) -> None:
     """Test a successful user initiated flow."""
     with (
         patch(
-            "homeassistant.components.kodi.config_flow.Kodi.ping",
+            "custom_components.better_kodi.config_flow.Kodi.ping",
             return_value=True,
         ),
         patch(
-            "homeassistant.components.kodi.config_flow.get_kodi_connection",
+            "custom_components.better_kodi.config_flow.get_kodi_connection",
             return_value=MockConnection(),
         ),
         patch(
-            "homeassistant.components.kodi.async_setup_entry",
+            "custom_components.better_kodi.async_setup_entry",
             return_value=True,
         ) as mock_setup_entry,
     ):
@@ -77,11 +78,11 @@ async def test_form_valid_auth(hass: HomeAssistant, user_flow: str) -> None:
     """Test we handle valid auth."""
     with (
         patch(
-            "homeassistant.components.kodi.config_flow.Kodi.ping",
+            "custom_components.better_kodi.config_flow.Kodi.ping",
             side_effect=InvalidAuthError,
         ),
         patch(
-            "homeassistant.components.kodi.config_flow.get_kodi_connection",
+            "custom_components.better_kodi.config_flow.get_kodi_connection",
             return_value=MockConnection(),
         ),
     ):
@@ -93,15 +94,15 @@ async def test_form_valid_auth(hass: HomeAssistant, user_flow: str) -> None:
 
     with (
         patch(
-            "homeassistant.components.kodi.config_flow.Kodi.ping",
+            "custom_components.better_kodi.config_flow.Kodi.ping",
             return_value=True,
         ),
         patch(
-            "homeassistant.components.kodi.config_flow.get_kodi_connection",
+            "custom_components.better_kodi.config_flow.get_kodi_connection",
             return_value=MockConnection(),
         ),
         patch(
-            "homeassistant.components.kodi.async_setup_entry",
+            "custom_components.better_kodi.async_setup_entry",
             return_value=True,
         ) as mock_setup_entry,
     ):
@@ -127,7 +128,7 @@ async def test_form_valid_ws_port(hass: HomeAssistant, user_flow: str) -> None:
     """Test we handle valid websocket port."""
     with (
         patch(
-            "homeassistant.components.kodi.config_flow.Kodi.ping",
+            "custom_components.better_kodi.config_flow.Kodi.ping",
             return_value=True,
         ),
         patch.object(
@@ -136,7 +137,7 @@ async def test_form_valid_ws_port(hass: HomeAssistant, user_flow: str) -> None:
             AsyncMock(side_effect=CannotConnectError),
         ),
         patch(
-            "homeassistant.components.kodi.config_flow.get_kodi_connection",
+            "custom_components.better_kodi.config_flow.get_kodi_connection",
             new=get_kodi_connection,
         ),
     ):
@@ -148,15 +149,15 @@ async def test_form_valid_ws_port(hass: HomeAssistant, user_flow: str) -> None:
 
     with (
         patch(
-            "homeassistant.components.kodi.config_flow.Kodi.ping",
+            "custom_components.better_kodi.config_flow.Kodi.ping",
             return_value=True,
         ),
         patch(
-            "homeassistant.components.kodi.config_flow.get_kodi_connection",
+            "custom_components.better_kodi.config_flow.get_kodi_connection",
             return_value=MockConnection(),
         ),
         patch(
-            "homeassistant.components.kodi.async_setup_entry",
+            "custom_components.better_kodi.async_setup_entry",
             return_value=True,
         ) as mock_setup_entry,
     ):
@@ -183,7 +184,7 @@ async def test_form_empty_ws_port(hass: HomeAssistant, user_flow: str) -> None:
     """Test we handle an empty websocket port input."""
     with (
         patch(
-            "homeassistant.components.kodi.config_flow.Kodi.ping",
+            "custom_components.better_kodi.config_flow.Kodi.ping",
             return_value=True,
         ),
         patch.object(
@@ -192,7 +193,7 @@ async def test_form_empty_ws_port(hass: HomeAssistant, user_flow: str) -> None:
             AsyncMock(side_effect=CannotConnectError),
         ),
         patch(
-            "homeassistant.components.kodi.config_flow.get_kodi_connection",
+            "custom_components.better_kodi.config_flow.get_kodi_connection",
             new=get_kodi_connection,
         ),
     ):
@@ -203,7 +204,7 @@ async def test_form_empty_ws_port(hass: HomeAssistant, user_flow: str) -> None:
     assert result["errors"] == {}
 
     with patch(
-        "homeassistant.components.kodi.async_setup_entry",
+        "custom_components.better_kodi.async_setup_entry",
         return_value=True,
     ) as mock_setup_entry:
         result = await hass.config_entries.flow.async_configure(
@@ -229,11 +230,11 @@ async def test_form_invalid_auth(hass: HomeAssistant, user_flow: str) -> None:
     """Test we handle invalid auth."""
     with (
         patch(
-            "homeassistant.components.kodi.config_flow.Kodi.ping",
+            "custom_components.better_kodi.config_flow.Kodi.ping",
             side_effect=InvalidAuthError,
         ),
         patch(
-            "homeassistant.components.kodi.config_flow.get_kodi_connection",
+            "custom_components.better_kodi.config_flow.get_kodi_connection",
             return_value=MockConnection(),
         ),
     ):
@@ -245,11 +246,11 @@ async def test_form_invalid_auth(hass: HomeAssistant, user_flow: str) -> None:
 
     with (
         patch(
-            "homeassistant.components.kodi.config_flow.Kodi.ping",
+            "custom_components.better_kodi.config_flow.Kodi.ping",
             side_effect=InvalidAuthError,
         ),
         patch(
-            "homeassistant.components.kodi.config_flow.get_kodi_connection",
+            "custom_components.better_kodi.config_flow.get_kodi_connection",
             return_value=MockConnection(),
         ),
     ):
@@ -263,11 +264,11 @@ async def test_form_invalid_auth(hass: HomeAssistant, user_flow: str) -> None:
 
     with (
         patch(
-            "homeassistant.components.kodi.config_flow.Kodi.ping",
+            "custom_components.better_kodi.config_flow.Kodi.ping",
             side_effect=CannotConnectError,
         ),
         patch(
-            "homeassistant.components.kodi.config_flow.get_kodi_connection",
+            "custom_components.better_kodi.config_flow.get_kodi_connection",
             return_value=MockConnection(),
         ),
     ):
@@ -281,11 +282,11 @@ async def test_form_invalid_auth(hass: HomeAssistant, user_flow: str) -> None:
 
     with (
         patch(
-            "homeassistant.components.kodi.config_flow.Kodi.ping",
+            "custom_components.better_kodi.config_flow.Kodi.ping",
             side_effect=Exception,
         ),
         patch(
-            "homeassistant.components.kodi.config_flow.get_kodi_connection",
+            "custom_components.better_kodi.config_flow.get_kodi_connection",
             return_value=MockConnection(),
         ),
     ):
@@ -299,7 +300,7 @@ async def test_form_invalid_auth(hass: HomeAssistant, user_flow: str) -> None:
 
     with (
         patch(
-            "homeassistant.components.kodi.config_flow.Kodi.ping",
+            "custom_components.better_kodi.config_flow.Kodi.ping",
             return_value=True,
         ),
         patch.object(
@@ -308,7 +309,7 @@ async def test_form_invalid_auth(hass: HomeAssistant, user_flow: str) -> None:
             AsyncMock(side_effect=CannotConnectError),
         ),
         patch(
-            "homeassistant.components.kodi.config_flow.get_kodi_connection",
+            "custom_components.better_kodi.config_flow.get_kodi_connection",
             new=get_kodi_connection,
         ),
     ):
@@ -325,11 +326,11 @@ async def test_form_cannot_connect_http(hass: HomeAssistant, user_flow: str) -> 
     """Test we handle cannot connect over HTTP error."""
     with (
         patch(
-            "homeassistant.components.kodi.config_flow.Kodi.ping",
+            "custom_components.better_kodi.config_flow.Kodi.ping",
             side_effect=CannotConnectError,
         ),
         patch(
-            "homeassistant.components.kodi.config_flow.get_kodi_connection",
+            "custom_components.better_kodi.config_flow.get_kodi_connection",
             return_value=MockConnection(),
         ),
     ):
@@ -344,11 +345,11 @@ async def test_form_exception_http(hass: HomeAssistant, user_flow: str) -> None:
     """Test we handle generic exception over HTTP."""
     with (
         patch(
-            "homeassistant.components.kodi.config_flow.Kodi.ping",
+            "custom_components.better_kodi.config_flow.Kodi.ping",
             side_effect=Exception,
         ),
         patch(
-            "homeassistant.components.kodi.config_flow.get_kodi_connection",
+            "custom_components.better_kodi.config_flow.get_kodi_connection",
             return_value=MockConnection(),
         ),
     ):
@@ -363,7 +364,7 @@ async def test_form_cannot_connect_ws(hass: HomeAssistant, user_flow: str) -> No
     """Test we handle cannot connect over WebSocket error."""
     with (
         patch(
-            "homeassistant.components.kodi.config_flow.Kodi.ping",
+            "custom_components.better_kodi.config_flow.Kodi.ping",
             return_value=True,
         ),
         patch.object(
@@ -372,7 +373,7 @@ async def test_form_cannot_connect_ws(hass: HomeAssistant, user_flow: str) -> No
             AsyncMock(side_effect=CannotConnectError),
         ),
         patch(
-            "homeassistant.components.kodi.config_flow.get_kodi_connection",
+            "custom_components.better_kodi.config_flow.get_kodi_connection",
             new=get_kodi_connection,
         ),
     ):
@@ -384,14 +385,14 @@ async def test_form_cannot_connect_ws(hass: HomeAssistant, user_flow: str) -> No
 
     with (
         patch(
-            "homeassistant.components.kodi.config_flow.Kodi.ping",
+            "custom_components.better_kodi.config_flow.Kodi.ping",
             return_value=True,
         ),
         patch.object(
             MockWSConnection, "connected", new_callable=PropertyMock(return_value=False)
         ),
         patch(
-            "homeassistant.components.kodi.config_flow.get_kodi_connection",
+            "custom_components.better_kodi.config_flow.get_kodi_connection",
             new=get_kodi_connection,
         ),
     ):
@@ -405,11 +406,11 @@ async def test_form_cannot_connect_ws(hass: HomeAssistant, user_flow: str) -> No
 
     with (
         patch(
-            "homeassistant.components.kodi.config_flow.Kodi.ping",
+            "custom_components.better_kodi.config_flow.Kodi.ping",
             side_effect=CannotConnectError,
         ),
         patch(
-            "homeassistant.components.kodi.config_flow.get_kodi_connection",
+            "custom_components.better_kodi.config_flow.get_kodi_connection",
             new=get_kodi_connection,
         ),
     ):
@@ -426,7 +427,7 @@ async def test_form_exception_ws(hass: HomeAssistant, user_flow: str) -> None:
     """Test we handle generic exception over WebSocket."""
     with (
         patch(
-            "homeassistant.components.kodi.config_flow.Kodi.ping",
+            "custom_components.better_kodi.config_flow.Kodi.ping",
             return_value=True,
         ),
         patch.object(
@@ -435,7 +436,7 @@ async def test_form_exception_ws(hass: HomeAssistant, user_flow: str) -> None:
             AsyncMock(side_effect=CannotConnectError),
         ),
         patch(
-            "homeassistant.components.kodi.config_flow.get_kodi_connection",
+            "custom_components.better_kodi.config_flow.get_kodi_connection",
             new=get_kodi_connection,
         ),
     ):
@@ -447,12 +448,12 @@ async def test_form_exception_ws(hass: HomeAssistant, user_flow: str) -> None:
 
     with (
         patch(
-            "homeassistant.components.kodi.config_flow.Kodi.ping",
+            "custom_components.better_kodi.config_flow.Kodi.ping",
             return_value=True,
         ),
         patch.object(MockWSConnection, "connect", AsyncMock(side_effect=Exception)),
         patch(
-            "homeassistant.components.kodi.config_flow.get_kodi_connection",
+            "custom_components.better_kodi.config_flow.get_kodi_connection",
             new=get_kodi_connection,
         ),
     ):
@@ -469,11 +470,11 @@ async def test_discovery(hass: HomeAssistant) -> None:
     """Test discovery flow works."""
     with (
         patch(
-            "homeassistant.components.kodi.config_flow.Kodi.ping",
+            "custom_components.better_kodi.config_flow.Kodi.ping",
             return_value=True,
         ),
         patch(
-            "homeassistant.components.kodi.config_flow.get_kodi_connection",
+            "custom_components.better_kodi.config_flow.get_kodi_connection",
             return_value=MockConnection(),
         ),
     ):
@@ -487,7 +488,7 @@ async def test_discovery(hass: HomeAssistant) -> None:
     assert result["step_id"] == "discovery_confirm"
 
     with patch(
-        "homeassistant.components.kodi.async_setup_entry",
+        "custom_components.better_kodi.async_setup_entry",
         return_value=True,
     ) as mock_setup_entry:
         result = await hass.config_entries.flow.async_configure(
@@ -513,11 +514,11 @@ async def test_discovery_cannot_connect_http(hass: HomeAssistant) -> None:
     """Test discovery aborts if cannot connect."""
     with (
         patch(
-            "homeassistant.components.kodi.config_flow.Kodi.ping",
+            "custom_components.better_kodi.config_flow.Kodi.ping",
             side_effect=CannotConnectError,
         ),
         patch(
-            "homeassistant.components.kodi.config_flow.get_kodi_connection",
+            "custom_components.better_kodi.config_flow.get_kodi_connection",
             return_value=MockConnection(),
         ),
     ):
@@ -535,7 +536,7 @@ async def test_discovery_cannot_connect_ws(hass: HomeAssistant) -> None:
     """Test discovery aborts if cannot connect to websocket."""
     with (
         patch(
-            "homeassistant.components.kodi.config_flow.Kodi.ping",
+            "custom_components.better_kodi.config_flow.Kodi.ping",
             return_value=True,
         ),
         patch.object(
@@ -544,7 +545,7 @@ async def test_discovery_cannot_connect_ws(hass: HomeAssistant) -> None:
             AsyncMock(side_effect=CannotConnectError),
         ),
         patch(
-            "homeassistant.components.kodi.config_flow.get_kodi_connection",
+            "custom_components.better_kodi.config_flow.get_kodi_connection",
             new=get_kodi_connection,
         ),
     ):
@@ -563,11 +564,11 @@ async def test_discovery_exception_http(hass: HomeAssistant) -> None:
     """Test we handle generic exception during discovery validation."""
     with (
         patch(
-            "homeassistant.components.kodi.config_flow.Kodi.ping",
+            "custom_components.better_kodi.config_flow.Kodi.ping",
             side_effect=Exception,
         ),
         patch(
-            "homeassistant.components.kodi.config_flow.get_kodi_connection",
+            "custom_components.better_kodi.config_flow.get_kodi_connection",
             return_value=MockConnection(),
         ),
     ):
@@ -585,11 +586,11 @@ async def test_discovery_invalid_auth(hass: HomeAssistant) -> None:
     """Test we handle invalid auth during discovery."""
     with (
         patch(
-            "homeassistant.components.kodi.config_flow.Kodi.ping",
+            "custom_components.better_kodi.config_flow.Kodi.ping",
             side_effect=InvalidAuthError,
         ),
         patch(
-            "homeassistant.components.kodi.config_flow.get_kodi_connection",
+            "custom_components.better_kodi.config_flow.get_kodi_connection",
             return_value=MockConnection(),
         ),
     ):
@@ -608,11 +609,11 @@ async def test_discovery_duplicate_data(hass: HomeAssistant) -> None:
     """Test discovery aborts if same mDNS packet arrives."""
     with (
         patch(
-            "homeassistant.components.kodi.config_flow.Kodi.ping",
+            "custom_components.better_kodi.config_flow.Kodi.ping",
             return_value=True,
         ),
         patch(
-            "homeassistant.components.kodi.config_flow.get_kodi_connection",
+            "custom_components.better_kodi.config_flow.get_kodi_connection",
             return_value=MockConnection(),
         ),
     ):

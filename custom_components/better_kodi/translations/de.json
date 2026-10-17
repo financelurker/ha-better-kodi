@@ -1,0 +1,98 @@
+{
+  "config": {
+    "abort": {
+      "already_configured": "Gerät ist bereits konfiguriert",
+      "cannot_connect": "Verbindung fehlgeschlagen",
+      "invalid_auth": "Ungültige Authentifizierung",
+      "no_uuid": "Die Kodi-Instanz hat keine eindeutige ID. Das liegt sehr wahrscheinlich an einer alten Kodi-Version (17.x oder älter). Du kannst die Integration manuell einrichten oder Kodi aktualisieren.",
+      "unknown": "Unerwarteter Fehler"
+    },
+    "error": {
+      "cannot_connect": "Verbindung fehlgeschlagen",
+      "invalid_auth": "Ungültige Authentifizierung",
+      "unknown": "Unerwarteter Fehler"
+    },
+    "flow_title": "{name}",
+    "step": {
+      "credentials": {
+        "data": {
+          "password": "Passwort",
+          "username": "Benutzername"
+        },
+        "description": "Gib Benutzername und Passwort von Kodi ein. Du findest sie unter System/Einstellungen/Dienste/Steuerung."
+      },
+      "discovery_confirm": {
+        "description": "Möchtest du Kodi (`{name}`) zu Home Assistant hinzufügen?",
+        "title": "Kodi gefunden"
+      },
+      "user": {
+        "data": {
+          "host": "Host",
+          "port": "Port",
+          "ssl": "Verwendet ein SSL-Zertifikat"
+        },
+        "data_description": {
+          "host": "Hostname oder IP-Adresse des Systems, auf dem Kodi läuft."
+        },
+        "description": "Verbindungsdaten für Kodi. Aktiviere in Kodi unter System/Einstellungen/Dienste/Steuerung die Option „Steuerung über HTTP erlauben“."
+      },
+      "ws_port": {
+        "data": {
+          "ws_port": "Port"
+        },
+        "description": "Der WebSocket-Port (in Kodi manchmal TCP-Port genannt). Für eine WebSocket-Verbindung muss in Kodi unter System/Einstellungen/Dienste/Steuerung die Fernsteuerung durch Programme erlaubt sein. Ist WebSocket nicht aktiviert, lösche den Port und lass das Feld leer."
+      }
+    }
+  },
+  "device_automation": {
+    "trigger_type": {
+      "turn_off": "{entity_name} ausgeschaltet",
+      "turn_on": "{entity_name} eingeschaltet"
+    }
+  },
+  "entity": {
+    "media_player": {
+      "media_player": {
+        "state_attributes": {
+          "dynamic_range": {
+            "name": "Dynamikumfang"
+          }
+        }
+      }
+    }
+  },
+  "services": {
+    "add_to_playlist": {
+      "description": "Fügt Musik zur Standard-Playlist hinzu (playlistid=0).",
+      "fields": {
+        "artist_name": {
+          "description": "Optionaler Künstlername zum Filtern.",
+          "name": "Künstler"
+        },
+        "media_id": {
+          "description": "Eindeutige ID des Medieneintrags (`songid` oder `albumid`). Ohne Angabe werden Medienname und Künstler benötigt, um die Kodi-Musikbibliothek zu durchsuchen.",
+          "name": "Medien-ID"
+        },
+        "media_name": {
+          "description": "Optionaler Medienname zum Filtern. Kann 'ALL' sein, wenn der Medientyp 'ALBUM' ist und ein Künstler angegeben ist, um alle Titel eines Künstlers hinzuzufügen.",
+          "name": "Medienname"
+        },
+        "media_type": {
+          "description": "Medientyp, entweder 'SONG' oder 'ALBUM'.",
+          "name": "Medientyp"
+        }
+      },
+      "name": "Zur Playlist hinzufügen"
+    },
+    "call_method": {
+      "description": "Ruft eine Methode der Kodi-JSON-RPC-API mit optionalen Parametern auf. Das Ergebnis wird als Home-Assistant-Event `better_kodi_call_method_result` ausgelöst.",
+      "fields": {
+        "method": {
+          "description": "Name der aufzurufenden Kodi-JSON-RPC-Methode.",
+          "name": "Methode"
+        }
+      },
+      "name": "Methode aufrufen"
+    }
+  }
+}

@@ -1,0 +1,2 @@
+# Keep in sync with the Home Assistant version Better Kodi targets.
+pytest-homeassistant-custom-component==0.13.373

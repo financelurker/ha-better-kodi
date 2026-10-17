@@ -1,0 +1,13 @@
+Better Kodi
+Copyright 2026 Better Kodi contributors
+
+This product includes software from Home Assistant Core
+(https://github.com/home-assistant/core), licensed under the Apache License,
+Version 2.0. The files in custom_components/better_kodi/ and tests/ are derived
+from homeassistant/components/kodi/ and tests/components/kodi/ at release
+2026.10.2 and have been modified. The first commit of this repository contains
+those files unmodified; all later changes are visible in the git history.
+
+Better Kodi is an unofficial community project. It is not affiliated with or
+endorsed by the Kodi project / XBMC Foundation or by the Open Home Foundation.
+Kodi is a registered trademark of the XBMC Foundation.

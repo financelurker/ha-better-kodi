@@ -1,8 +1,10 @@
+# Based on tests/components/kodi from Home Assistant Core 2026.10.2
+# (Apache-2.0). Modified for Better Kodi; see NOTICE and the git history.
 """Tests for the Kodi media browser."""
 
 from unittest.mock import AsyncMock, MagicMock
 
-from homeassistant.components.kodi.browse_media import get_media_info
+from custom_components.better_kodi.browse_media import get_media_info
 from homeassistant.components.media_player import MediaType
 
 CHANNELS = {
