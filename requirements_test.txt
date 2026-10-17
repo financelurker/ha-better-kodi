@@ -1,2 +1,4 @@
 # Keep in sync with the Home Assistant version Better Kodi targets.
 pytest-homeassistant-custom-component==0.13.373
+# Integration requirement (Home Assistant does not install it for tests).
+pykodi==0.2.7
