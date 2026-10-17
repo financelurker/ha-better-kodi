@@ -1,0 +1,185 @@
+{
+  "config": {
+    "abort": {
+      "already_configured": "Better Kodi ist für diese Kodi-Entität bereits eingerichtet.",
+      "reconfigure_successful": "Die Verbindung zu Kodi wurde aktualisiert.",
+      "reauth_successful": "Die Kodi-Anmeldung wurde aktualisiert."
+    },
+    "error": {
+      "cannot_connect": "Keine Verbindung zu Kodi. Prüfe Host und Port und ob in Kodi unter Einstellungen → Dienste → Steuerung „Steuerung über HTTP erlauben“ aktiviert ist.",
+      "invalid_auth": "Kodi hat Benutzername oder Passwort abgelehnt.",
+      "not_kodi": "Bitte wähle einen Media-Player der Kodi-Integration."
+    },
+    "step": {
+      "user": {
+        "title": "Kodi-Media-Player erweitern",
+        "description": "Better Kodi ergänzt einen Media-Player der eingebauten Kodi-Integration um Warteschlange, Abspielen von Links und Übergabe an andere Kodis. Die Kodi-Integration bleibt eingerichtet und funktioniert weiter.",
+        "data": {
+          "source_entity_id": "Kodi-Media-Player",
+          "hide_source": "Kodi-Media-Player ausblenden"
+        },
+        "data_description": {
+          "hide_source": "Der Media-Player von Better Kodi ersetzt ihn in Dashboards und bei Assist. Beim Entfernen von Better Kodi wird er wieder eingeblendet."
+        }
+      },
+      "connection": {
+        "title": "Verbindung zu Kodi",
+        "description": "Für die Warteschlange spricht Better Kodi auch direkt mit Kodi. Die Einstellungen stammen aus der Kodi-Integration für {entity_id}; passe sie bei Bedarf an.",
+        "data": {
+          "host": "Host",
+          "port": "HTTP-Port",
+          "ws_port": "WebSocket-Port",
+          "username": "Benutzername",
+          "password": "Passwort",
+          "ssl": "HTTPS verwenden"
+        },
+        "data_description": {
+          "ws_port": "Für Live-Aktualisierungen der Warteschlange. Dafür muss in Kodi unter Einstellungen → Dienste → Steuerung „Fernsteuerung durch auf anderen Systemen befindlichen Anwendungen zulassen“ aktiviert sein. Leer lassen, um Live-Aktualisierungen abzuschalten."
+        }
+      },
+      "reconfigure": {
+        "title": "Verbindung zu Kodi",
+        "data": {
+          "host": "Host",
+          "port": "HTTP-Port",
+          "ws_port": "WebSocket-Port",
+          "username": "Benutzername",
+          "password": "Passwort",
+          "ssl": "HTTPS verwenden"
+        },
+        "data_description": {
+          "ws_port": "Für Live-Aktualisierungen der Warteschlange. Leer lassen, um sie abzuschalten."
+        }
+      },
+      "reauth_confirm": {
+        "title": "Kodi-Anmeldung",
+        "description": "Kodi unter {host} hat den gespeicherten Benutzernamen oder das Passwort abgelehnt. Gib die aktuellen ein (Kodi: Einstellungen → Dienste → Steuerung).",
+        "data": {
+          "username": "Benutzername",
+          "password": "Passwort"
+        }
+      }
+    }
+  },
+  "entity": {
+    "media_player": {
+      "better_kodi": {
+        "state_attributes": {
+          "queue_position": {
+            "name": "Position in der Warteschlange"
+          },
+          "queue_length": {
+            "name": "Länge der Warteschlange"
+          },
+          "dynamic_range": {
+            "name": "Dynamikbereich"
+          }
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "cannot_connect": {
+      "message": "Keine Verbindung zu Kodi unter {host}."
+    },
+    "invalid_auth": {
+      "message": "Kodi hat Benutzername oder Passwort abgelehnt."
+    },
+    "play_only": {
+      "message": "Dieser Link ({resolver}) kann nur sofort abgespielt und nicht eingereiht werden."
+    },
+    "enqueue_not_supported": {
+      "message": "Einträge vom Typ „{media_type}“ können nur sofort abgespielt und nicht eingereiht werden."
+    },
+    "resolve_failed": {
+      "message": "{url} kann nicht abgespielt werden: {error}"
+    },
+    "queue_error": {
+      "message": "{error}"
+    },
+    "kodi_error": {
+      "message": "Kodi meldet einen Fehler: {error}"
+    },
+    "handover_failed": {
+      "message": "Übergabe an {target} fehlgeschlagen: {error}"
+    },
+    "invalid_target": {
+      "message": "{target} ist kein anderer Better-Kodi-Media-Player."
+    },
+    "target_not_ready": {
+      "message": "{target} ist nicht bereit. Ist das Kodi erreichbar?"
+    },
+    "source_missing": {
+      "message": "Der Kodi-Media-Player, den Better Kodi erweitert, existiert nicht mehr. Entferne diesen Better-Kodi-Eintrag oder richte die Kodi-Integration erneut ein."
+    }
+  },
+  "services": {
+    "call_method": {
+      "name": "Methode aufrufen",
+      "description": "Ruft eine JSON-RPC-Methode von Kodi auf und gibt die Antwort zurück.",
+      "fields": {
+        "method": {
+          "name": "Methode",
+          "description": "Name der JSON-RPC-Methode, zum Beispiel Player.GetActivePlayers."
+        },
+        "params": {
+          "name": "Parameter",
+          "description": "Parameter der Methode."
+        }
+      }
+    },
+    "get_queue": {
+      "name": "Warteschlange abrufen",
+      "description": "Gibt die Video-Warteschlange von Kodi mit Positionen, Titeln und dem aktuellen Eintrag zurück."
+    },
+    "remove_from_queue": {
+      "name": "Aus Warteschlange entfernen",
+      "description": "Entfernt einen Eintrag aus der Warteschlange. Der laufende Eintrag kann nicht entfernt werden.",
+      "fields": {
+        "position": {
+          "name": "Position",
+          "description": "Position des Eintrags, beginnend bei 0."
+        }
+      }
+    },
+    "move_queue_item": {
+      "name": "Eintrag verschieben",
+      "description": "Verschiebt einen Eintrag an eine andere Position der Warteschlange.",
+      "fields": {
+        "position": {
+          "name": "Position",
+          "description": "Aktuelle Position des Eintrags, beginnend bei 0."
+        },
+        "to_position": {
+          "name": "Neue Position",
+          "description": "Position, an die der Eintrag verschoben werden soll, beginnend bei 0."
+        }
+      }
+    },
+    "handover": {
+      "name": "Übergeben",
+      "description": "Setzt die aktuelle Wiedergabe samt Warteschlange auf einem anderen Kodi fort.",
+      "fields": {
+        "destination": {
+          "name": "Ziel",
+          "description": "Der Better-Kodi-Media-Player, der übernehmen soll."
+        },
+        "keep_source_playing": {
+          "name": "Hier weiterspielen",
+          "description": "Wiedergabe auf diesem Kodi nicht stoppen."
+        },
+        "resume": {
+          "name": "An gleicher Stelle fortsetzen",
+          "description": "Im aktuellen Eintrag zur selben Stelle springen."
+        }
+      }
+    }
+  },
+  "selector": {
+    "browse": {
+      "options": {
+        "queue": "Warteschlange"
+      }
+    }
+  }
+}

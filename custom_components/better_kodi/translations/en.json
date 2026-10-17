@@ -1,0 +1,185 @@
+{
+  "config": {
+    "abort": {
+      "already_configured": "Better Kodi is already set up for this Kodi entity.",
+      "reconfigure_successful": "The connection to Kodi was updated.",
+      "reauth_successful": "The Kodi login was updated."
+    },
+    "error": {
+      "cannot_connect": "Could not connect to Kodi. Check host and port, and that \"Allow remote control via HTTP\" is on in Kodi (Settings → Services → Control).",
+      "invalid_auth": "Kodi rejected the user name or password.",
+      "not_kodi": "Please choose a media player of the Kodi integration."
+    },
+    "step": {
+      "user": {
+        "title": "Extend a Kodi media player",
+        "description": "Better Kodi adds a queue, URL casting and handover to a media player of the built-in Kodi integration. The Kodi integration stays set up and keeps working.",
+        "data": {
+          "source_entity_id": "Kodi media player",
+          "hide_source": "Hide the Kodi media player"
+        },
+        "data_description": {
+          "hide_source": "Better Kodi's media player replaces it in dashboards and Assist. It is shown again when you remove Better Kodi."
+        }
+      },
+      "connection": {
+        "title": "Connection to Kodi",
+        "description": "Better Kodi also talks to Kodi directly for the queue. These settings were taken from the Kodi integration for {entity_id}; change them if needed.",
+        "data": {
+          "host": "Host",
+          "port": "HTTP port",
+          "ws_port": "WebSocket port",
+          "username": "Username",
+          "password": "Password",
+          "ssl": "Use HTTPS"
+        },
+        "data_description": {
+          "ws_port": "Used for live updates of the queue. Requires \"Allow remote control from applications on other systems\" in Kodi (Settings → Services → Control). Leave empty to turn live updates off."
+        }
+      },
+      "reconfigure": {
+        "title": "Connection to Kodi",
+        "data": {
+          "host": "Host",
+          "port": "HTTP port",
+          "ws_port": "WebSocket port",
+          "username": "Username",
+          "password": "Password",
+          "ssl": "Use HTTPS"
+        },
+        "data_description": {
+          "ws_port": "Used for live updates of the queue. Leave empty to turn live updates off."
+        }
+      },
+      "reauth_confirm": {
+        "title": "Kodi login",
+        "description": "Kodi at {host} rejected the stored user name or password. Enter the current ones (Kodi: Settings → Services → Control).",
+        "data": {
+          "username": "Username",
+          "password": "Password"
+        }
+      }
+    }
+  },
+  "entity": {
+    "media_player": {
+      "better_kodi": {
+        "state_attributes": {
+          "queue_position": {
+            "name": "Queue position"
+          },
+          "queue_length": {
+            "name": "Queue length"
+          },
+          "dynamic_range": {
+            "name": "Dynamic range"
+          }
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "cannot_connect": {
+      "message": "Could not connect to Kodi at {host}."
+    },
+    "invalid_auth": {
+      "message": "Kodi rejected the user name or password."
+    },
+    "play_only": {
+      "message": "This link ({resolver}) can only be played right away, not added to the queue."
+    },
+    "enqueue_not_supported": {
+      "message": "Items of type \"{media_type}\" can only be played right away, not added to the queue."
+    },
+    "resolve_failed": {
+      "message": "Could not play {url}: {error}"
+    },
+    "queue_error": {
+      "message": "{error}"
+    },
+    "kodi_error": {
+      "message": "Kodi reported an error: {error}"
+    },
+    "handover_failed": {
+      "message": "Handover to {target} failed: {error}"
+    },
+    "invalid_target": {
+      "message": "{target} is not another Better Kodi media player."
+    },
+    "target_not_ready": {
+      "message": "{target} is not ready. Is its Kodi reachable?"
+    },
+    "source_missing": {
+      "message": "The Kodi media player that Better Kodi extends no longer exists. Remove this Better Kodi entry, or set up the Kodi integration again."
+    }
+  },
+  "services": {
+    "call_method": {
+      "name": "Call method",
+      "description": "Calls a Kodi JSON-RPC method and returns Kodi's response.",
+      "fields": {
+        "method": {
+          "name": "Method",
+          "description": "Name of the JSON-RPC method, for example Player.GetActivePlayers."
+        },
+        "params": {
+          "name": "Parameters",
+          "description": "Parameters of the method."
+        }
+      }
+    },
+    "get_queue": {
+      "name": "Get queue",
+      "description": "Returns Kodi's video queue with positions, titles and the current item."
+    },
+    "remove_from_queue": {
+      "name": "Remove from queue",
+      "description": "Removes an item from the queue. The item that is playing cannot be removed.",
+      "fields": {
+        "position": {
+          "name": "Position",
+          "description": "Position of the item, starting at 0."
+        }
+      }
+    },
+    "move_queue_item": {
+      "name": "Move queue item",
+      "description": "Moves an item to another position in the queue.",
+      "fields": {
+        "position": {
+          "name": "Position",
+          "description": "Current position of the item, starting at 0."
+        },
+        "to_position": {
+          "name": "New position",
+          "description": "Position the item should move to, starting at 0."
+        }
+      }
+    },
+    "handover": {
+      "name": "Hand over",
+      "description": "Continues the current playback with its queue on another Kodi.",
+      "fields": {
+        "destination": {
+          "name": "Destination",
+          "description": "The Better Kodi media player that should take over."
+        },
+        "keep_source_playing": {
+          "name": "Keep playing here",
+          "description": "Don't stop playback on this Kodi."
+        },
+        "resume": {
+          "name": "Resume at the same time",
+          "description": "Seek to the same position in the current item."
+        }
+      }
+    }
+  },
+  "selector": {
+    "browse": {
+      "options": {
+        "queue": "Queue"
+      }
+    }
+  }
+}
