@@ -26,10 +26,16 @@ When Better Kodi is set up, it reads host, ports and credentials from the config
 
 Reading another integration's config entry data couples us to its internal keys. Accepted: if Core changes them, pre-filling breaks until Better Kodi is updated; already stored entries keep working.
 
-### Device, visibility and Assist
+#### Kodi switched off, wrong password, Kodi entity gone
+
+- Better Kodi starts even when Kodi doesn't answer, like the Kodi integration does. Otherwise `turn_on` (which runs the user's Kodi turn-on automation) would be unavailable exactly when it is needed. Add-ons and the queue are read once Kodi answers.
+- If Kodi rejects the credentials, setup fails with a re-authentication request.
+- If the Kodi entity is removed, the entry fails to set up with an error asking to remove Better Kodi or set up Kodi again. A renamed Kodi entity is followed (the entry reloads).
+
+## Device, visibility and Assist
 
 - The Better Kodi entity is attached to the existing Kodi device (`entity.device_entry`). Since Home Assistant 2026.10 a device belongs to exactly one config entry, so the device page lists the Kodi integration as owner and shows the Better Kodi entity among its entities. Better Kodi is not listed as a second integration on the device.
-- Optional (default on): the Kodi entity is hidden when Better Kodi is set up and shown again when Better Kodi is removed. Only a hide done by Better Kodi is undone.
+- Optional (default on): the Kodi entity is hidden when Better Kodi is set up and shown again when Better Kodi is removed. Only a hide done by Better Kodi is undone: nothing is unhidden if the option was off, and a hide by the user is never touched.
 - Assist: on first setup, the Kodi entity's exposure settings and aliases are copied to the Better Kodi entity and the Kodi entity is unexposed. On removal, the exposure settings are copied back.
 
 ## Queue behaviour
@@ -45,6 +51,8 @@ Better Kodi only works with Kodi's **video** playlist (`playlistid 1`). The musi
 | `add` | Append to the end | Clear the queue and play |
 | `replace` | Clear the queue and play | Clear the queue and play |
 
+Kodi answers `Player.Open` at once but starts the player later; add-on items can take seconds. For 20 seconds after Better Kodi starts the queue, or until the player appears, the queue counts as playing at the started position, so a quick second `add` does not wipe the queue. All changing queue operations run one after another (a lock per Kodi), because Home Assistant runs service calls concurrently.
+
 If Kodi is playing something that was not started from the queue (for example a movie picked on the TV), `next` and `add` append to the queue, and `play` starts the new item from the queue.
 
 Library items from the media browser (`movie`, `episode`, `musicvideo`) can be queued by their Kodi ID. Other library items (shows, seasons, channels, directories) are forwarded to the Kodi entity and only support playing now.
@@ -56,7 +64,7 @@ A resolver turns a page URL into something Kodi can play. They are tried in orde
 | Site | Kodi add-on needed | Result | Queueable |
 | --- | --- | --- | --- |
 | YouTube video, Shorts, live, `youtu.be` | `plugin.video.youtube` | `plugin://plugin.video.youtube/play/?video_id=…` | yes |
-| YouTube playlist | `plugin.video.youtube` | `plugin://plugin.video.youtube/play/?playlist_id=…&play=1` | play now only |
+| YouTube playlist | `plugin.video.youtube` | `plugin://plugin.video.youtube/play/?playlist_id=…&order=default&action=play` | play now only |
 | Rumble | none | Direct video URL from Rumble's embed API (resolved in Home Assistant, like Cast Kodi does) | yes |
 | Jellyfin web link (`…#/details?id=…`) | `plugin.video.jellyfin` (Jellyfin for Kodi) | `plugin://plugin.video.jellyfin/?mode=play&id=…` | yes |
 | Jellyfin web link | `plugin.video.jellycon` (JellyCon) | `plugin://plugin.video.jellycon/?mode=PLAY&item_id=…` | play now only (JellyCon starts playback itself) |
@@ -65,7 +73,9 @@ A resolver turns a page URL into something Kodi can play. They are tried in orde
 
 If the given text contains spaces (shared text such as "Look at this: https://…"), the first `http(s)://` link in it is used.
 
-Resolvers that need an add-on are only active when that add-on is installed and enabled in Kodi (checked with `Addons.GetAddons`). Without a matching resolver, Better Kodi passes the URL to Kodi unchanged.
+Installed and enabled add-ons are read with `Addons.GetAddons` (cached for 10 minutes, retried while Kodi is off). If a link is recognized but its add-on is missing, the resolver fails: YouTube links then fall back to SendToKodi if it is installed; Jellyfin links never do, because they need the Jellyfin login that only the Jellyfin add-ons have. Unrecognized `http(s)` links go to SendToKodi if installed, otherwise to Kodi unchanged.
+
+"Play now only" items (YouTube playlists, JellyCon) are always played with `replace`: their add-ons fill the video playlist themselves and clear it first. `next` and `add` are refused with an error.
 
 Titles and thumbnails: YouTube titles come from YouTube's oEmbed endpoint (no API key), Rumble titles from its embed API. They are remembered for the Queue folder, because Kodi shows add-on items only as paths until they are played.
 
@@ -73,8 +83,10 @@ Titles and thumbnails: YouTube titles come from YouTube's oEmbed endpoint (no AP
 
 `better_kodi.handover` moves playback from one Better Kodi entity to another:
 
+The service field is called `destination`, not `target`, so it does not get mixed up with the action's own target.
+
 1. Read the source's queue (file paths, so it also works when the two Kodis have separate libraries), current position and playback time.
-2. Load the queue on the target, start at the same position, then seek to the same time.
+2. Load the queue on the target, start at the same position, then seek to the same time. A fresh player may refuse to seek at first; the seek is retried for up to 15 seconds. If it still fails, the handover finishes anyway (the item starts from the beginning) and a warning is logged.
 3. Stop the source (unless `keep_source_playing` is set).
 
 If the source plays something that is not from the queue, only that item is handed over.

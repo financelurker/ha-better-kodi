@@ -183,3 +183,26 @@ async def test_reconfigure(
     assert entry.data[CONF_HOST] == "10.0.0.9"
     assert entry.data[CONF_PORT] == 8081
     assert entry.data[CONF_SOURCE_ENTITY_UUID] == kodi_source.uuid
+
+
+async def test_reauth(hass: HomeAssistant, kodi_source: KodiSource) -> None:
+    entry = better_kodi_entry(kodi_source)
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    result = await entry.start_reauth_flow(hass)
+    assert result["step_id"] == "reauth_confirm"
+    with patch.object(KodiClient, "ping", side_effect=KodiAuthError):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_USERNAME: "kodi", CONF_PASSWORD: "wrong"}
+        )
+    assert result["errors"] == {"base": "invalid_auth"}
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_USERNAME: "kodi", CONF_PASSWORD: "new"}
+    )
+    await hass.async_block_till_done()
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reauth_successful"
+    assert entry.data[CONF_PASSWORD] == "new"

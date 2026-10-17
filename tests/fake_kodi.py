@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 from typing import Any
+from urllib.parse import urlsplit
 
 from custom_components.better_kodi.kodi_client import KodiConnectionError, KodiRpcError
 
@@ -22,6 +23,11 @@ class FakeKodi:
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.offline = False
         self.seeks: list[dict[str, Any]] = []
+        # Like real Kodi, a player can need a while to show up after Player.Open,
+        # and may refuse to seek right after starting.
+        self.start_delay = 0
+        self.seek_refusals = 0
+        self._pending_start: int | None = None
 
     # Helpers for tests ----------------------------------------------------------
 
@@ -64,6 +70,12 @@ class FakeKodi:
         }
 
     def _Player_GetActivePlayers(self) -> list[dict[str, Any]]:
+        if self._pending_start is not None:
+            if self._pending_start > 0:
+                self._pending_start -= 1
+            else:
+                self._pending_start = None
+                self.player_active = True
         return (
             [{"playerid": 1, "playertype": "internal", "type": "video"}]
             if self.player_active
@@ -89,9 +101,13 @@ class FakeKodi:
             position = item.get("position", 0)
             if not 0 <= position < len(self.playlist):
                 raise KodiRpcError("Player.Open", -32602, "Invalid params.")
-            self.player_active = True
             self.position = position
             self.time = {"hours": 0, "minutes": 0, "seconds": 0, "milliseconds": 0}
+            if self.start_delay:
+                self.player_active = False
+                self._pending_start = self.start_delay
+            else:
+                self.player_active = True
             return "OK"
         raise KodiRpcError("Player.Open", -32602, "Unsupported item")
 
@@ -102,6 +118,9 @@ class FakeKodi:
 
     def _Player_Seek(self, playerid: int, value: dict[str, Any]) -> dict[str, Any]:
         self._require_player(playerid)
+        if self.seek_refusals:
+            self.seek_refusals -= 1
+            raise KodiRpcError("Player.Seek", -32100, "Failed to execute method.")
         self.seeks.append(value)
         self.time = dict(value["time"])
         return {"time": self.time}
@@ -168,7 +187,11 @@ class FakeKodi:
     @staticmethod
     def _to_playlist_item(entry: dict[str, Any]) -> dict[str, Any]:
         if "file" in entry:
-            return {"file": entry["file"], "label": entry["file"], "type": "unknown"}
+            # Kodi labels unplayed paths with their last path segment, for example
+            # "play" for plugin://plugin.video.youtube/play/?video_id=…
+            path = urlsplit(entry["file"]).path.rstrip("/")
+            label = path.rsplit("/", 1)[-1] or entry["file"]
+            return {"file": entry["file"], "label": label, "type": "unknown"}
         for key, kind in (
             ("movieid", "movie"),
             ("episodeid", "episode"),

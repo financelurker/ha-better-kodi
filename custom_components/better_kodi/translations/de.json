@@ -2,7 +2,8 @@
   "config": {
     "abort": {
       "already_configured": "Better Kodi ist für diese Kodi-Entität bereits eingerichtet.",
-      "reconfigure_successful": "Die Verbindung zu Kodi wurde aktualisiert."
+      "reconfigure_successful": "Die Verbindung zu Kodi wurde aktualisiert.",
+      "reauth_successful": "Die Kodi-Anmeldung wurde aktualisiert."
     },
     "error": {
       "cannot_connect": "Keine Verbindung zu Kodi. Prüfe Host und Port und ob in Kodi unter Einstellungen → Dienste → Steuerung „Steuerung über HTTP erlauben“ aktiviert ist.",
@@ -48,6 +49,14 @@
         },
         "data_description": {
           "ws_port": "Für Live-Aktualisierungen der Warteschlange. Leer lassen, um sie abzuschalten."
+        }
+      },
+      "reauth_confirm": {
+        "title": "Kodi-Anmeldung",
+        "description": "Kodi unter {host} hat den gespeicherten Benutzernamen oder das Passwort abgelehnt. Gib die aktuellen ein (Kodi: Einstellungen → Dienste → Steuerung).",
+        "data": {
+          "username": "Benutzername",
+          "password": "Passwort"
         }
       }
     }
@@ -99,6 +108,9 @@
     },
     "target_not_ready": {
       "message": "{target} ist nicht bereit. Ist das Kodi erreichbar?"
+    },
+    "source_missing": {
+      "message": "Der Kodi-Media-Player, den Better Kodi erweitert, existiert nicht mehr. Entferne diesen Better-Kodi-Eintrag oder richte die Kodi-Integration erneut ein."
     }
   },
   "services": {
@@ -140,7 +152,7 @@
         },
         "to_position": {
           "name": "Neue Position",
-          "description": "Position, an die der Eintrag soll, beginnend bei 0."
+          "description": "Position, an die der Eintrag verschoben werden soll, beginnend bei 0."
         }
       }
     },
@@ -148,7 +160,7 @@
       "name": "Übergeben",
       "description": "Setzt die aktuelle Wiedergabe samt Warteschlange auf einem anderen Kodi fort.",
       "fields": {
-        "target": {
+        "destination": {
           "name": "Ziel",
           "description": "Der Better-Kodi-Media-Player, der übernehmen soll."
         },
@@ -160,6 +172,13 @@
           "name": "An gleicher Stelle fortsetzen",
           "description": "Im aktuellen Eintrag zur selben Stelle springen."
         }
+      }
+    }
+  },
+  "selector": {
+    "browse": {
+      "options": {
+        "queue": "Warteschlange"
       }
     }
   }

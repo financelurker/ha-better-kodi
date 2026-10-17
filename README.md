@@ -49,6 +49,8 @@ What happens:
 
 ### Good to know
 
+- Better Kodi starts even when Kodi (or the TV) is off, so you can switch it on through Better Kodi's media player.
+- If Kodi's password changes, Home Assistant asks you to log in again (**Settings → Devices & services**).
 - Both media players have the same name. Better Kodi's gets an entity ID ending in `_2` (for example `media_player.living_room_kodi_2`). Rename it under the entity's settings if you like.
 - Point dashboards, automations and scripts to Better Kodi's media player. Your existing automations on the Kodi device's **turned on / turned off** triggers keep working, because Better Kodi forwards power commands to the Kodi media player.
 - On the device page, Kodi is shown as the device's integration and Better Kodi's media player is listed among its entities. Since Home Assistant 2026.10 a device belongs to a single integration, so Better Kodi isn't listed there separately.
@@ -134,7 +136,7 @@ The entity also has the attributes `queue_position` and `queue_length`.
 | `better_kodi.get_queue` | Returns the queue (position, title, file, type, current item). Use `response_variable`. |
 | `better_kodi.remove_from_queue` | Removes the item at `position` (0-based). The playing item can't be removed. |
 | `better_kodi.move_queue_item` | Moves the item at `position` to `to_position`. |
-| `better_kodi.handover` | Continues playback on another Better Kodi media player (`target`), at the same item and time. Stops here unless `keep_source_playing: true`. |
+| `better_kodi.handover` | Continues playback on another Better Kodi media player (`destination`), at the same item and time (`resume`, default on). Stops here unless `keep_source_playing: true`. |
 | `better_kodi.call_method` | Calls a Kodi JSON-RPC method with `params` and returns `result`. |
 | `media_player.clear_playlist` | Clears the queue. |
 
@@ -145,7 +147,7 @@ action: better_kodi.handover
 target:
   entity_id: media_player.living_room_kodi_2
 data:
-  target: media_player.bedroom_kodi_2
+  destination: media_player.bedroom_kodi_2
 ```
 
 Handover uses file paths, so it also works when the two Kodis have separate libraries, as long as both can reach the files (for example on the same NAS) and have the same add-ons.
@@ -163,9 +165,11 @@ Handover uses file paths, so it also works when the two Kodis have separate libr
 | Media from Home Assistant's media browser | nothing | ✓ | ✓ |
 | Other web pages | SendToKodi (`plugin.video.sendtokodi`) | ✓ | ✓ |
 
-Better Kodi checks which add-ons are installed and enabled in Kodi. If a link needs an add-on that's missing, SendToKodi is used when it is installed; otherwise you get an error that names the missing add-on.
+Better Kodi checks which add-ons are installed and enabled in Kodi. If a YouTube link needs the YouTube add-on and it's missing, SendToKodi is used when it is installed; otherwise you get an error that names the missing add-on. Jellyfin links always need one of the Jellyfin add-ons, because they need your Jellyfin login.
 
-JellyCon starts playback by itself, so its links can't be queued. Jellyfin items you pick in Kodi's library are available in the media browser anyway.
+YouTube playlists and JellyCon links can only be played right away: their add-ons fill Kodi's queue themselves and clear it first. Jellyfin items you pick in Kodi's library are available in the media browser anyway.
+
+Media from Home Assistant's media browser is passed to Kodi as a signed link that is valid for 24 hours. Queue entries of this kind stop working after that.
 
 ## How it works
 

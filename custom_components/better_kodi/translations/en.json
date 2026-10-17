@@ -2,7 +2,8 @@
   "config": {
     "abort": {
       "already_configured": "Better Kodi is already set up for this Kodi entity.",
-      "reconfigure_successful": "The connection to Kodi was updated."
+      "reconfigure_successful": "The connection to Kodi was updated.",
+      "reauth_successful": "The Kodi login was updated."
     },
     "error": {
       "cannot_connect": "Could not connect to Kodi. Check host and port, and that \"Allow remote control via HTTP\" is on in Kodi (Settings → Services → Control).",
@@ -48,6 +49,14 @@
         },
         "data_description": {
           "ws_port": "Used for live updates of the queue. Leave empty to turn live updates off."
+        }
+      },
+      "reauth_confirm": {
+        "title": "Kodi login",
+        "description": "Kodi at {host} rejected the stored user name or password. Enter the current ones (Kodi: Settings → Services → Control).",
+        "data": {
+          "username": "Username",
+          "password": "Password"
         }
       }
     }
@@ -99,6 +108,9 @@
     },
     "target_not_ready": {
       "message": "{target} is not ready. Is its Kodi reachable?"
+    },
+    "source_missing": {
+      "message": "The Kodi media player that Better Kodi extends no longer exists. Remove this Better Kodi entry, or set up the Kodi integration again."
     }
   },
   "services": {
@@ -148,8 +160,8 @@
       "name": "Hand over",
       "description": "Continues the current playback with its queue on another Kodi.",
       "fields": {
-        "target": {
-          "name": "Target",
+        "destination": {
+          "name": "Destination",
           "description": "The Better Kodi media player that should take over."
         },
         "keep_source_playing": {
@@ -160,6 +172,13 @@
           "name": "Resume at the same time",
           "description": "Seek to the same position in the current item."
         }
+      }
+    }
+  },
+  "selector": {
+    "browse": {
+      "options": {
+        "queue": "Queue"
       }
     }
   }

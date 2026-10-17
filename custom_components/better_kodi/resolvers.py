@@ -6,7 +6,7 @@ that add-on is installed and enabled. See docs/DESIGN.md for the table.
 """
 
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import logging
 import re
 from typing import Any
@@ -59,6 +59,11 @@ JELLYFIN_ID = re.compile(r"^[0-9a-f]{32}$")
 class ResolveError(Exception):
     """A URL was recognized but could not be resolved."""
 
+    def __init__(self, message: str, *, fallback: bool = True) -> None:
+        """Store whether SendToKodi may still try the URL."""
+        super().__init__(message)
+        self.fallback = fallback
+
 
 @dataclass(slots=True)
 class ResolvedMedia:
@@ -69,7 +74,6 @@ class ResolvedMedia:
     title: str | None = None
     thumbnail: str | None = None
     queueable: bool = True
-    extra: dict[str, Any] = field(default_factory=dict)
 
     @property
     def file(self) -> str | None:
@@ -97,7 +101,7 @@ async def async_resolve(url: str, context: ResolveContext) -> ResolvedMedia:
                 return result
         except ResolveError as err:
             _LOGGER.debug("%s could not resolve %s: %s", resolver.__name__, url, err)
-            if ADDON_SENDTOKODI in context.addons:
+            if err.fallback and ADDON_SENDTOKODI in context.addons:
                 return _sendtokodi(url)
             raise
     return ResolvedMedia(item={"file": url}, resolver="passthrough")
@@ -136,7 +140,7 @@ async def resolve_youtube(url: str, context: ResolveContext) -> ResolvedMedia | 
         return ResolvedMedia(
             item={
                 "file": f"plugin://{ADDON_YOUTUBE}/play/?"
-                + urlencode({"playlist_id": youtube_id, "play": 1})
+                + urlencode({"playlist_id": youtube_id, "order": "default", "action": "play"})
             },
             resolver="youtube",
             queueable=False,
@@ -294,7 +298,10 @@ async def resolve_jellyfin(url: str, context: ResolveContext) -> ResolvedMedia |
             resolver="jellycon",
             queueable=False,
         )
-    raise ResolveError("no Jellyfin add-on is installed in Kodi")
+    # SendToKodi cannot help: Jellyfin needs a login that only the add-ons have.
+    raise ResolveError(
+        "Jellyfin links need the Jellyfin for Kodi or JellyCon add-on in Kodi", fallback=False
+    )
 
 
 # --- Direct paths and fallback -------------------------------------------------

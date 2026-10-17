@@ -1,7 +1,10 @@
 """Tests for the queue rules (docs/DESIGN.md, "Queue behaviour")."""
 
+import asyncio
+
 import pytest
 
+from custom_components.better_kodi import queue as queue_module
 from custom_components.better_kodi.queue import EnqueueMode, KodiQueue, QueueError
 
 from .fake_kodi import FakeKodi
@@ -85,7 +88,8 @@ async def test_items_mark_current_and_use_known_titles(kodi: FakeKodi, queue: Ko
     await start_queue(queue, A, B, position=1)
     queue.known.remember(A["file"], "Video A", "https://img/a.jpg")
     items = await queue.items()
-    assert [item.title for item in items] == ["Video A", B["file"]]
+    # Kodi only labels B with a part of its path; A has a remembered title.
+    assert [item.title for item in items] == ["Video A", "b"]
     assert items[0].thumbnail == "https://img/a.jpg"
     assert [item.current for item in items] == [False, True]
 
@@ -146,3 +150,63 @@ async def test_handover_of_item_outside_queue(kodi: FakeKodi, queue: KodiQueue) 
 async def test_handover_needs_playback(queue: KodiQueue) -> None:
     with pytest.raises(QueueError, match="Nothing is playing"):
         await queue.snapshot()
+
+
+async def test_quick_second_add_while_kodi_is_starting(kodi: FakeKodi, queue: KodiQueue) -> None:
+    """Kodi's player appears only a while after Player.Open."""
+    kodi.start_delay = 3
+    await queue.enqueue(A, EnqueueMode.ADD)
+    assert not kodi.player_active
+    await queue.enqueue(B, EnqueueMode.ADD)
+    await queue.enqueue(NEW, EnqueueMode.NEXT)
+    assert kodi.files() == [A["file"], NEW["file"], B["file"]]
+
+
+async def test_play_while_kodi_is_starting(kodi: FakeKodi, queue: KodiQueue) -> None:
+    kodi.start_delay = 5
+    await queue.enqueue(A, EnqueueMode.PLAY)
+    await queue.enqueue(NEW, EnqueueMode.PLAY)
+    assert kodi.files() == [A["file"], NEW["file"]]
+    assert kodi.position == 1
+
+
+async def test_concurrent_adds_keep_every_item(kodi: FakeKodi, queue: KodiQueue) -> None:
+    kodi.start_delay = 2
+    await asyncio.gather(*(queue.enqueue(item, EnqueueMode.ADD) for item in (A, B, C)))
+    assert sorted(kodi.files()) == sorted([A["file"], B["file"], C["file"]])
+
+
+async def test_start_window_expires(
+    kodi: FakeKodi, queue: KodiQueue, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    kodi.start_delay = 1000  # Kodi never starts
+    await queue.enqueue(A, EnqueueMode.ADD)
+    monkeypatch.setattr(queue_module, "START_WINDOW", 0)
+    await queue.enqueue(B, EnqueueMode.ADD)
+    assert kodi.files() == [B["file"]]
+
+
+async def test_handover_retries_seek(
+    kodi: FakeKodi, queue: KodiQueue, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(queue_module, "POLL_INTERVAL", 0)
+    target_kodi = FakeKodi()
+    target_kodi.start_delay = 2
+    target_kodi.seek_refusals = 2
+    await start_queue(queue, A, B)
+    kodi.time = {"hours": 1, "minutes": 0, "seconds": 5, "milliseconds": 0}
+    assert await KodiQueue(target_kodi).restore(await queue.snapshot())  # type: ignore[arg-type]
+    assert target_kodi.seeks == [{"time": kodi.time}]
+
+
+async def test_handover_gives_up_seeking(
+    kodi: FakeKodi, queue: KodiQueue, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(queue_module, "POLL_INTERVAL", 0)
+    monkeypatch.setattr(queue_module, "SEEK_TIMEOUT", 0)
+    target_kodi = FakeKodi()
+    target_kodi.seek_refusals = 100
+    await start_queue(queue, A)
+    kodi.time = {"hours": 0, "minutes": 1, "seconds": 0, "milliseconds": 0}
+    assert not await KodiQueue(target_kodi).restore(await queue.snapshot())  # type: ignore[arg-type]
+    assert target_kodi.player_active

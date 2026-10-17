@@ -64,7 +64,7 @@ handover:
       integration: better_kodi
       domain: media_player
   fields:
-    target:
+    destination:
       required: true
       selector:
         entity:

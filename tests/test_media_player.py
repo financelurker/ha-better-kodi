@@ -1,9 +1,11 @@
 """Tests for the Better Kodi media player."""
 
+from datetime import timedelta
 from typing import Any
+from unittest.mock import patch
 
 import pytest
-from pytest_homeassistant_custom_component.common import async_mock_service
+from pytest_homeassistant_custom_component.common import async_fire_time_changed, async_mock_service
 from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
 
 from custom_components.better_kodi.const import (
@@ -11,6 +13,7 @@ from custom_components.better_kodi.const import (
     QUEUE_CONTENT_ID,
     QUEUE_CONTENT_TYPE,
 )
+from custom_components.better_kodi.kodi_client import KodiAuthError, KodiClient
 from custom_components.better_kodi.media_player import BetterKodiMediaPlayer, extract_link
 from custom_components.better_kodi.resolvers import ADDON_JELLYCON, ADDON_YOUTUBE, YOUTUBE_OEMBED
 from homeassistant.components.homeassistant import exposed_entities
@@ -19,6 +22,8 @@ from homeassistant.components.media_player import (
     ATTR_MEDIA_CONTENT_TYPE,
     DATA_COMPONENT,
     DOMAIN as MP_DOMAIN,
+    BrowseMedia,
+    MediaClass,
     MediaPlayerEntityFeature,
 )
 from homeassistant.config_entries import ConfigEntryState
@@ -27,8 +32,15 @@ from homeassistant.core import HomeAssistant, SupportsResponse
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.setup import async_setup_component
+from homeassistant.util import dt as dt_util
 
-from .conftest import KodiSource, SourceFactory, own_entity_id, setup_better_kodi
+from .conftest import (
+    KodiSource,
+    SourceFactory,
+    better_kodi_entry,
+    own_entity_id,
+    setup_better_kodi,
+)
 from .fake_kodi import FakeKodi
 
 VIDEO_ID = "dQw4w9WgXcQ"
@@ -281,8 +293,8 @@ async def test_browse_queue_and_jump(
 
     folder = await entity_of(hass, player).async_browse_media(QUEUE_CONTENT_TYPE, QUEUE_CONTENT_ID)
     assert [child.title for child in folder.children] == [
-        "▶ https://cdn.example/a.mp4",
-        "https://cdn.example/b.mp4",
+        "▶ a.mp4",
+        "b.mp4",
     ]
     assert folder.children[1].thumbnail.startswith(
         f"/api/media_player_proxy/{player}/browse_media/"
@@ -352,7 +364,7 @@ async def test_handover(
     source_kodi.time = {"hours": 0, "minutes": 3, "seconds": 7, "milliseconds": 0}
 
     await hass.services.async_call(
-        DOMAIN, "handover", {ATTR_ENTITY_ID: player, "target": other_player}, blocking=True
+        DOMAIN, "handover", {ATTR_ENTITY_ID: player, "destination": other_player}, blocking=True
     )
     assert target_kodi.files() == source_kodi.files()
     assert target_kodi.position == 1
@@ -363,7 +375,7 @@ async def test_handover(
 async def test_handover_to_itself_is_refused(hass: HomeAssistant, player: str) -> None:
     with pytest.raises(ServiceValidationError) as err:
         await hass.services.async_call(
-            DOMAIN, "handover", {ATTR_ENTITY_ID: player, "target": player}, blocking=True
+            DOMAIN, "handover", {ATTR_ENTITY_ID: player, "destination": player}, blocking=True
         )
     assert err.value.translation_key == "invalid_target"
 
@@ -390,16 +402,143 @@ async def test_assist_settings_move_and_come_back(
     assert exposed_entities.async_should_expose(hass, "conversation", kodi_source.entity_id)
 
 
-async def test_not_ready_while_kodi_is_offline(
+async def test_starts_while_kodi_is_off(
     hass: HomeAssistant, kodi_source: KodiSource, fakes: dict[str, FakeKodi]
 ) -> None:
+    """The TV is off when Home Assistant starts: turn_on must still work."""
     fakes[kodi_source.host].offline = True
-    from .conftest import better_kodi_entry
+    hass.states.async_set(kodi_source.entity_id, "off", {"supported_features": 384})
+    entry = await setup_better_kodi(hass, kodi_source)
+    player = own_entity_id(hass, entry)
+    assert entry.state is ConfigEntryState.LOADED
+    assert hass.states.get(player).state == "off"
+    assert hass.states.get(player).attributes["queue_length"] == 0
 
+    calls = async_mock_service(hass, MP_DOMAIN, "turn_on")
+    await entity_of(hass, player).async_turn_on()
+    assert calls[0].data == {ATTR_ENTITY_ID: kodi_source.entity_id}
+
+    # Add-ons are read once Kodi answers.
+    fakes[kodi_source.host].offline = False
+    fakes[kodi_source.host].addons = {ADDON_YOUTUBE}
+    assert ADDON_YOUTUBE in await entry.runtime_data.async_get_addons()
+
+
+async def test_wrong_password_asks_to_log_in_again(
+    hass: HomeAssistant, kodi_source: KodiSource
+) -> None:
     entry = better_kodi_entry(kodi_source)
     entry.add_to_hass(hass)
-    await hass.config_entries.async_setup(entry.entry_id)
-    assert entry.state is ConfigEntryState.SETUP_RETRY
+    with patch.object(KodiClient, "ping", side_effect=KodiAuthError):
+        await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.SETUP_ERROR
+    flows = hass.config_entries.flow.async_progress_by_handler(DOMAIN)
+    assert flows[0]["context"]["source"] == "reauth"
+
+
+async def test_kodi_entity_removed(hass: HomeAssistant, kodi_source: KodiSource) -> None:
+    entry = await setup_better_kodi(hass, kodi_source)
+    er.async_get(hass).async_remove(kodi_source.entity_id)
+    await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.SETUP_ERROR
+    assert entry.error_reason_translation_key == "source_missing"
+
+
+async def test_kodi_entity_renamed(hass: HomeAssistant, kodi_source: KodiSource) -> None:
+    entry = await setup_better_kodi(hass, kodi_source)
+    player = own_entity_id(hass, entry)
+    er.async_get(hass).async_update_entity(
+        kodi_source.entity_id, new_entity_id="media_player.tv_kodi"
+    )
+    hass.states.async_set("media_player.tv_kodi", "paused", {"media_title": "Renamed"})
+    await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.LOADED
+    assert entry.runtime_data.source_entity_id == "media_player.tv_kodi"
+    assert hass.states.get(player).attributes["media_title"] == "Renamed"
+
+
+async def test_removal_leaves_user_choices_alone(
+    hass: HomeAssistant, kodi_source: KodiSource
+) -> None:
+    """Without hide_source, another integration's hide is not undone."""
+    er.async_get(hass).async_update_entity(
+        kodi_source.entity_id, hidden_by=er.RegistryEntryHider.INTEGRATION
+    )
+    entry = better_kodi_entry(kodi_source, hide=False)
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert await hass.config_entries.async_remove(entry.entry_id)
+    await hass.async_block_till_done()
+    source = er.async_get(hass).async_get(kodi_source.entity_id)
+    assert source.hidden_by is er.RegistryEntryHider.INTEGRATION
+
+
+async def test_play_only_link_replaces_the_queue(
+    hass: HomeAssistant, kodi_source: KodiSource, fakes: dict[str, FakeKodi], player: str
+) -> None:
+    kodi = fakes[kodi_source.host]
+    await play_media(hass, player, "https://cdn.example/a.mp4")
+    await play_media(hass, player, "https://cdn.example/b.mp4", enqueue="add")
+    await play_media(hass, player, "https://www.youtube.com/playlist?list=PL1")
+    assert kodi.files() == [
+        "plugin://plugin.video.youtube/play/?playlist_id=PL1&order=default&action=play"
+    ]
+
+
+async def test_browse_response_as_object_and_library_root(
+    hass: HomeAssistant, kodi_source: KodiSource, player: str
+) -> None:
+    root = BrowseMedia(
+        media_class=MediaClass.DIRECTORY,
+        media_content_id="library",
+        media_content_type="library",
+        title="Kodi",
+        can_play=False,
+        can_expand=True,
+        children=[],
+    )
+    async_mock_service(
+        hass,
+        MP_DOMAIN,
+        "browse_media",
+        response={kodi_source.entity_id: root},
+        supports_response=SupportsResponse.ONLY,
+    )
+    hass.config.language = "de"
+    result = await entity_of(hass, player).async_browse_media("library", "library")
+    assert [child.title for child in result.children] == ["Warteschlange"]
+
+
+async def test_queue_thumbnail_comes_from_kodi(
+    hass: HomeAssistant, kodi_source: KodiSource, player: str
+) -> None:
+    entity = entity_of(hass, player)
+    with patch.object(KodiClient, "fetch_image", return_value=(b"jpeg", "image/jpeg")) as fetch:
+        image = await entity.async_get_browse_image(
+            "better_kodi_queue_item", "1", "image://smb%3a%2f%2fnas%2fb.jpg/"
+        )
+    assert image == (b"jpeg", "image/jpeg")
+    fetch.assert_called_once_with("image://smb%3a%2f%2fnas%2fb.jpg/")
+
+
+async def test_queue_refreshes_when_item_changes(
+    hass: HomeAssistant, kodi_source: KodiSource, fakes: dict[str, FakeKodi], player: str
+) -> None:
+    """Without WebSocket: the next item starts, the state stays "playing"."""
+    kodi = fakes[kodi_source.host]
+    await kodi.call("Playlist.Add", {"playlistid": 1, "item": [{"file": "x"}, {"file": "y"}]})
+    await kodi.call("Player.Open", {"item": {"playlistid": 1, "position": 0}})
+    hass.states.async_set(kodi_source.entity_id, "playing", {"media_title": "x"})
+    await hass.async_block_till_done()
+    await kodi.call("Player.GoTo", {"playerid": 1, "to": 1})
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=2))
+    hass.states.async_set(kodi_source.entity_id, "playing", {"media_title": "y"})
+    await hass.async_block_till_done()
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=4))
+    await hass.async_block_till_done()
+    assert hass.states.get(player).attributes["queue_position"] == 1
 
 
 async def test_queue_attributes_follow_notifications(
@@ -419,6 +558,7 @@ async def test_queue_attributes_follow_notifications(
         ("https://youtu.be/abc", "https://youtu.be/abc"),
         ("  https://youtu.be/abc  ", "https://youtu.be/abc"),
         ("Schau dir das an: https://youtu.be/abc?si=x\nVia YouTube", "https://youtu.be/abc?si=x"),
+        ("(siehe https://youtu.be/abc).", "https://youtu.be/abc"),
         ("no link here", "no link here"),
     ],
 )

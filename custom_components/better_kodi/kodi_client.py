@@ -71,7 +71,6 @@ class KodiClient:
             token = base64.b64encode(f"{username}:{password or ''}".encode()).decode()
             self._headers["Authorization"] = f"Basic {token}"
         self._ids = itertools.count(1)
-        self._ws_connected = False
 
     @property
     def session(self) -> aiohttp.ClientSession:
@@ -91,11 +90,6 @@ class KodiClient:
             return None
         scheme = "wss" if self._ssl else "ws"
         return f"{scheme}://{self._host}:{self._ws_port}/jsonrpc"
-
-    @property
-    def ws_connected(self) -> bool:
-        """Return True while the notification WebSocket is connected."""
-        return self._ws_connected
 
     async def call(self, method: str, params: dict[str, Any] | None = None) -> Any:
         """Call a JSON-RPC method and return its result."""
@@ -163,7 +157,6 @@ class KodiClient:
         while True:
             try:
                 async with self._session.ws_connect(url, heartbeat=30) as ws:
-                    self._ws_connected = True
                     attempt = 0
                     _LOGGER.debug("Connected to %s", url)
                     async for message in ws:
@@ -177,8 +170,7 @@ class KodiClient:
             except (aiohttp.ClientError, TimeoutError) as err:
                 _LOGGER.debug("WebSocket %s unavailable: %s", url, err)
             finally:
-                self._ws_connected = False
-            delay = RECONNECT_DELAYS[min(attempt, len(RECONNECT_DELAYS) - 1)]
+                delay = RECONNECT_DELAYS[min(attempt, len(RECONNECT_DELAYS) - 1)]
             attempt += 1
             await asyncio.sleep(delay)
 

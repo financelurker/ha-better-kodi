@@ -81,7 +81,9 @@ async def test_youtube_playlist_is_play_only(hass: HomeAssistant) -> None:
     result = await async_resolve(
         "https://www.youtube.com/playlist?list=PL123", context(hass, ADDON_YOUTUBE)
     )
-    assert result.item == {"file": "plugin://plugin.video.youtube/play/?playlist_id=PL123&play=1"}
+    assert result.item == {
+        "file": "plugin://plugin.video.youtube/play/?playlist_id=PL123&order=default&action=play"
+    }
     assert not result.queueable
 
 
@@ -226,3 +228,10 @@ async def test_other_pages_without_sendtokodi_pass_through(hass: HomeAssistant) 
     result = await async_resolve(f"  {url} ", context(hass))
     assert result.item == {"file": url}
     assert result.resolver == "passthrough"
+
+
+async def test_jellyfin_without_addon_does_not_use_sendtokodi(hass: HomeAssistant) -> None:
+    with pytest.raises(ResolveError, match="Jellyfin"):
+        await async_resolve(
+            f"https://j/web/#/details?id={JELLYFIN_ID}", context(hass, ADDON_SENDTOKODI)
+        )

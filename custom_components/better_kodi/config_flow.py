@@ -1,5 +1,6 @@
 """Config flow for Better Kodi."""
 
+from collections.abc import Mapping
 from typing import Any
 
 import probatio
@@ -165,6 +166,50 @@ class BetterKodiConfigFlow(ConfigFlow, domain=DOMAIN):
             data_schema=connection_schema(self._defaults),
             errors=errors,
             description_placeholders={"entity_id": self._source[CONF_SOURCE_ENTITY_ID]},
+        )
+
+    async def async_step_reauth(self, entry_data: Mapping[str, Any]) -> ConfigFlowResult:
+        """Kodi rejected the stored credentials."""
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Ask for Kodi's user name and password again."""
+        entry = self._get_reauth_entry()
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            connection = {
+                **entry.data,
+                CONF_USERNAME: user_input.get(CONF_USERNAME),
+                CONF_PASSWORD: user_input.get(CONF_PASSWORD),
+            }
+            if (error := await validate_connection(self.hass, connection)) is None:
+                return self.async_update_reload_and_abort(
+                    entry,
+                    data_updates={
+                        CONF_USERNAME: connection[CONF_USERNAME],
+                        CONF_PASSWORD: connection[CONF_PASSWORD],
+                    },
+                )
+            errors["base"] = error
+
+        username = entry.data.get(CONF_USERNAME)
+        return self.async_show_form(
+            step_id="reauth_confirm",
+            data_schema=probatio.Schema(
+                {
+                    probatio.Optional(
+                        CONF_USERNAME,
+                        **({"description": {"suggested_value": username}} if username else {}),
+                    ): selector.TextSelector(),
+                    probatio.Optional(CONF_PASSWORD): selector.TextSelector(
+                        selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
+                    ),
+                }
+            ),
+            errors=errors,
+            description_placeholders={"host": entry.data[CONF_HOST]},
         )
 
     async def async_step_reconfigure(

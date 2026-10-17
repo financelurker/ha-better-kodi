@@ -7,11 +7,11 @@ from homeassistant.core import HomeAssistant, SupportsResponse, callback
 from homeassistant.helpers import config_validation as cv, service
 
 from .const import (
+    ATTR_DESTINATION,
     ATTR_KEEP_SOURCE_PLAYING,
     ATTR_METHOD,
     ATTR_PARAMS,
     ATTR_POSITION,
-    ATTR_TARGET,
     ATTR_TO_POSITION,
     DOMAIN,
     SERVICE_CALL_METHOD,
@@ -71,7 +71,7 @@ def async_setup_services(hass: HomeAssistant) -> None:
     register(
         SERVICE_HANDOVER,
         {
-            probatio.Required(ATTR_TARGET): cv.entity_id,
+            probatio.Required(ATTR_DESTINATION): cv.entity_id,
             probatio.Optional(ATTR_KEEP_SOURCE_PLAYING, default=False): cv.boolean,
             probatio.Optional(ATTR_RESUME, default=True): cv.boolean,
         },

@@ -7,7 +7,6 @@ import re
 from typing import Any
 
 from homeassistant.components import media_source
-from homeassistant.components.homeassistant import exposed_entities
 from homeassistant.components.media_player import (
     ATTR_MEDIA_CONTENT_ID,
     ATTR_MEDIA_CONTENT_TYPE,
@@ -52,13 +51,14 @@ from homeassistant.helpers.event import (
     async_track_entity_registry_updated_event,
     async_track_state_change_event,
 )
+from homeassistant.helpers.translation import async_get_translations
 
 from . import BetterKodiConfigEntry, BetterKodiData
+from .assist import copy_aliases, transfer_exposure
 from .const import (
     ATTR_QUEUE_LENGTH,
     ATTR_QUEUE_POSITION,
     CONF_ASSIST_MIGRATED,
-    CONF_SOURCE_ENTITY_UUID,
     DOMAIN,
     LIBRARY_ID_KEYS,
     QUEUE_CONTENT_ID,
@@ -68,7 +68,13 @@ from .const import (
 )
 from .kodi_client import KodiError, KodiRpcError
 from .queue import EnqueueMode, HandoverSnapshot, QueueError, QueueStatus
-from .resolvers import ResolveContext, ResolvedMedia, ResolveError, async_resolve
+from .resolvers import (
+    KODI_PATH_SCHEMES,
+    ResolveContext,
+    ResolvedMedia,
+    ResolveError,
+    async_resolve,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -80,7 +86,8 @@ OWN_FEATURES = (
 )
 
 LINK_IN_TEXT = re.compile(r"https?://\S+")
-URL_SCHEMES = ("http://", "https://", "plugin://", "special://", "smb://", "nfs://")
+TRAILING_PUNCTUATION = ".,;:!?)]}>'\"»“”"
+PLAYABLE_SCHEMES = frozenset({"http", "https", *KODI_PATH_SCHEMES})
 
 
 async def async_setup_entry(
@@ -104,10 +111,7 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
         """Initialize the wrapper for the Kodi entity of a config entry."""
         self._entry = entry
         self._data: BetterKodiData = entry.runtime_data
-        self._source_uuid: str = entry.data[CONF_SOURCE_ENTITY_UUID]
-        self._source_entity_id = (
-            er.async_resolve_entity_id(er.async_get(hass), self._source_uuid) or ""
-        )
+        self._source_entity_id = self._data.source_entity_id
         self._source_state: State | None = None
         self._queue_status = QueueStatus(None, None, 0)
         self._attr_unique_id = entry.entry_id
@@ -149,7 +153,7 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
         old = self._source_state
         self._source_state = event.data["new_state"]
         new = self._source_state
-        if old is None or new is None or old.state != new.state:
+        if _playing_item_changed(old, new):
             self._schedule_queue_refresh()
         self.async_write_ha_state()
 
@@ -180,26 +184,10 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
     @callback
     def _async_migrate_assist_settings(self) -> None:
         """Move Assist exposure and aliases from the Kodi entity, once."""
-        if self._entry.data.get(CONF_ASSIST_MIGRATED) or not self._source_entity_id:
+        if self._entry.data.get(CONF_ASSIST_MIGRATED):
             return
-        for assistant, settings in exposed_entities.async_get_entity_settings(
-            self.hass, self._source_entity_id
-        ).items():
-            if (should_expose := settings.get("should_expose")) is None:
-                continue
-            exposed_entities.async_expose_entity(
-                self.hass, assistant, self.entity_id, should_expose
-            )
-            exposed_entities.async_expose_entity(
-                self.hass, assistant, self._source_entity_id, False
-            )
-        registry = er.async_get(self.hass)
-        source = registry.async_get(self._source_entity_id)
-        own = registry.async_get(self.entity_id)
-        if source is not None and own is not None:
-            extra = [alias for alias in source.aliases if alias not in own.aliases]
-            if extra:
-                registry.async_update_entity(self.entity_id, aliases=[*own.aliases, *extra])
+        transfer_exposure(self.hass, self._source_entity_id, self.entity_id, unexpose_source=True)
+        copy_aliases(self.hass, self._source_entity_id, self.entity_id)
         self.hass.config_entries.async_update_entry(
             self._entry, data={**self._entry.data, CONF_ASSIST_MIGRATED: True}
         )
@@ -414,14 +402,17 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
             await self._run(self._data.queue.enqueue({"file": url}, mode))
             return
 
-        if media_id.startswith(URL_SCHEMES):
+        if _is_playable_link(media_id):
             resolved = await self._async_resolve(media_id)
-            if not resolved.queueable and mode in (EnqueueMode.NEXT, EnqueueMode.ADD):
-                raise ServiceValidationError(
-                    translation_domain=DOMAIN,
-                    translation_key="play_only",
-                    translation_placeholders={"resolver": resolved.resolver},
-                )
+            if not resolved.queueable:
+                if mode in (EnqueueMode.NEXT, EnqueueMode.ADD):
+                    raise ServiceValidationError(
+                        translation_domain=DOMAIN,
+                        translation_key="play_only",
+                        translation_placeholders={"resolver": resolved.resolver},
+                    )
+                # The add-on fills Kodi's video playlist itself and clears it first.
+                mode = EnqueueMode.REPLACE
             self._data.queue.known.remember(resolved.file, resolved.title, resolved.thumbnail)
             await self._run(self._data.queue.enqueue(resolved.item, mode))
             return
@@ -448,7 +439,7 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
 
     async def _async_resolve(self, url: str) -> ResolvedMedia:
         addons = await self._data.async_get_addons()
-        context = ResolveContext(session=self._data.client.session, addons=addons)
+        context = ResolveContext(session=self._data.web_session, addons=addons)
         try:
             return await async_resolve(url, context)
         except ResolveError as err:
@@ -510,13 +501,14 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
         await self._run(self._data.queue.move(position, to_position))
 
     async def async_handover(
-        self, target: str, keep_source_playing: bool = False, resume: bool = True
+        self, destination: str, keep_source_playing: bool = False, resume: bool = True
     ) -> None:
         """Continue the current playback on another Better Kodi entity."""
+        target = destination
         target_data = self._target_data(target)
         snapshot: HandoverSnapshot = await self._run(self._data.queue.snapshot())
         try:
-            await target_data.queue.restore(snapshot, resume=resume)
+            resumed = await target_data.queue.restore(snapshot, resume=resume)
         except QueueError as err:
             raise ServiceValidationError(
                 translation_domain=DOMAIN,
@@ -529,6 +521,12 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
                 translation_key="handover_failed",
                 translation_placeholders={"target": target, "error": str(err)},
             ) from err
+        if not resumed:
+            _LOGGER.warning(
+                "Handover from %s to %s: playback started at the start of the item",
+                self.entity_id,
+                target,
+            )
         target_data.notify_queue_changed()
         if not keep_source_playing:
             await self.async_media_stop()
@@ -587,7 +585,7 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
         if payload is None:
             raise BrowseError(f"Kodi returned nothing for {media_content_id}")
         result = browse_media_from(payload)
-        if media_content_type is None and media_content_id is None:
+        if media_content_type in (None, "library") and media_content_id in (None, "", "library"):
             result.children = [
                 await self._async_browse_queue(as_child=True),
                 *(result.children or []),
@@ -595,7 +593,7 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
         return result
 
     async def _async_browse_queue(self, *, as_child: bool = False) -> BrowseMedia:
-        title = "Warteschlange" if self.hass.config.language.startswith("de") else "Queue"
+        title = await self._async_queue_title()
         if as_child:
             return BrowseMedia(
                 media_class=MediaClass.PLAYLIST,
@@ -632,6 +630,12 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
             children_media_class=MediaClass.VIDEO,
         )
 
+    async def _async_queue_title(self) -> str:
+        translations = await async_get_translations(
+            self.hass, self.hass.config.language, "selector", [DOMAIN]
+        )
+        return translations.get(f"component.{DOMAIN}.selector.browse.options.queue", "Queue")
+
     def _queue_thumbnail(self, position: int, thumbnail: str | None) -> str | None:
         if not thumbnail:
             return None
@@ -659,8 +663,23 @@ def extract_link(text: str) -> str:
     if " " not in text and "\n" not in text:
         return text
     if match := LINK_IN_TEXT.search(text):
-        return match.group(0)
+        return match.group(0).rstrip(TRAILING_PUNCTUATION)
     return text
+
+
+def _is_playable_link(media_id: str) -> bool:
+    scheme, separator, _ = media_id.partition("://")
+    return bool(separator) and scheme.lower() in PLAYABLE_SCHEMES
+
+
+def _playing_item_changed(old: State | None, new: State | None) -> bool:
+    """Return True if the Kodi entity moved to another item or state."""
+    if old is None or new is None or old.state != new.state:
+        return True
+    return any(
+        old.attributes.get(key) != new.attributes.get(key)
+        for key in ("media_content_id", "media_title")
+    )
 
 
 def browse_media_from(payload: BrowseMedia | dict[str, Any]) -> BrowseMedia:
