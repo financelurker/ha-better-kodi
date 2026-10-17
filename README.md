@@ -25,9 +25,12 @@ Better Kodi does not replace the built-in Kodi integration. It sits on top of it
 
 ### HACS
 
-1. In HACS, open the menu → **Custom repositories**.
-2. Add `https://github.com/financelurker/ha-better-kodi` with category **Integration**.
-3. Install **Better Kodi** and restart Home Assistant.
+[![Open your Home Assistant instance and open Better Kodi in the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=financelurker&repository=ha-better-kodi&category=integration)
+
+1. Click the button above. It opens Better Kodi in HACS on your Home Assistant and adds the repository if needed.
+2. Select **Download** and restart Home Assistant.
+
+Or by hand: in HACS, open the menu → **Custom repositories**, add `https://github.com/financelurker/ha-better-kodi` with category **Integration**, then download **Better Kodi** and restart.
 
 ### Manual
 
@@ -35,7 +38,9 @@ Copy `custom_components/better_kodi` into the `custom_components` folder of your
 
 ## Setup
 
-**Settings → Devices & services → Add integration → Better Kodi**, once per Kodi.
+[![Open your Home Assistant instance and start setting up Better Kodi.](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=better_kodi)
+
+Or **Settings → Devices & services → Add integration → Better Kodi**. Set it up once per Kodi.
 
 1. Choose the Kodi media player. Keep **Hide the Kodi media player** on, unless you want to see both.
 2. Check the connection. Host, ports and credentials are taken from the Kodi integration.
