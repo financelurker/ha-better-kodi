@@ -1,0 +1,19 @@
+{
+  "services": {
+    "call_method": {
+      "service": "mdi:console"
+    },
+    "get_queue": {
+      "service": "mdi:playlist-play"
+    },
+    "remove_from_queue": {
+      "service": "mdi:playlist-remove"
+    },
+    "move_queue_item": {
+      "service": "mdi:swap-vertical"
+    },
+    "handover": {
+      "service": "mdi:transfer"
+    }
+  }
+}

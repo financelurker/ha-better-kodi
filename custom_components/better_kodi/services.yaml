@@ -1,0 +1,80 @@
+call_method:
+  target:
+    entity:
+      integration: better_kodi
+      domain: media_player
+  fields:
+    method:
+      required: true
+      example: "Player.GetActivePlayers"
+      selector:
+        text:
+    params:
+      example: '{"playlistid": 1, "properties": ["title"]}'
+      selector:
+        object:
+
+get_queue:
+  target:
+    entity:
+      integration: better_kodi
+      domain: media_player
+
+remove_from_queue:
+  target:
+    entity:
+      integration: better_kodi
+      domain: media_player
+  fields:
+    position:
+      required: true
+      example: 2
+      selector:
+        number:
+          min: 0
+          max: 9999
+          mode: box
+
+move_queue_item:
+  target:
+    entity:
+      integration: better_kodi
+      domain: media_player
+  fields:
+    position:
+      required: true
+      example: 3
+      selector:
+        number:
+          min: 0
+          max: 9999
+          mode: box
+    to_position:
+      required: true
+      example: 1
+      selector:
+        number:
+          min: 0
+          max: 9999
+          mode: box
+
+handover:
+  target:
+    entity:
+      integration: better_kodi
+      domain: media_player
+  fields:
+    target:
+      required: true
+      selector:
+        entity:
+          integration: better_kodi
+          domain: media_player
+    keep_source_playing:
+      default: false
+      selector:
+        boolean:
+    resume:
+      default: true
+      selector:
+        boolean:
