@@ -329,23 +329,26 @@ async def test_lookups_are_limited_and_not_doubled(kodi: FakeKodi) -> None:
 
 
 async def test_queue_covers(kodi: FakeKodi) -> None:
-    """Covers: remembered image, Kodi's wrapped web image, YouTube's standard image."""
+    """Covers in the shapes Kodi really returns (always image://<encoded>/)."""
     queue = KodiQueue(kodi)  # type: ignore[arg-type]
     youtube = "plugin://plugin.video.youtube/play/?video_id=dQw4w9WgXcQ"
+    web = "image://https%3a%2f%2fimg.example%2fa.jpg%7cUser-Agent%3dKodi/"
     kodi.playlist = [
-        {
-            "file": "plugin://x/a",
-            "label": "a",
-            "thumbnail": "image://https%3a%2f%2fimg.example%2fa.jpg/",
-        },
-        {"file": "plugin://x/b", "label": "b", "thumbnail": "DefaultVideo.png"},
+        {"file": "plugin://x/a", "label": "a", "thumbnail": web},
+        {"file": "plugin://x/b", "label": "b", "thumbnail": "image://DefaultVideo.png/"},
         {"file": youtube, "label": "play", "thumbnail": ""},
-        {"file": "smb://nas/c.mkv", "label": "c", "thumbnail": "image://smb%3a%2f%2fnas%2fc.jpg/"},
+        {
+            "file": "smb://nas/c.mkv",
+            "label": "c",
+            "thumbnail": "image://video@smb%3a%2f%2fnas%2fc.mkv/",
+        },
+        {"file": "plugin://x/d", "label": "d", "thumbnail": ""},
     ]
     queue.known.remember("plugin://x/b", "B", "https://img.example/b.jpg")
     assert [item.thumbnail for item in await queue.items()] == [
-        "https://img.example/a.jpg",
-        "https://img.example/b.jpg",
+        web,  # through Home Assistant's proxy, header options intact
+        "https://img.example/b.jpg",  # remembered beats Kodi's placeholder
         "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
-        "image://smb%3a%2f%2fnas%2fc.jpg/",  # served through Home Assistant's proxy
+        "image://video@smb%3a%2f%2fnas%2fc.mkv/",
+        None,
     ]

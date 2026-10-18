@@ -458,21 +458,20 @@ def portable_item(raw: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _kodi_image(image: str | None) -> str | None:
-    """Return a usable image from Kodi's image path, or None.
+    """Return Kodi's image of an entry, or None for none or a skin placeholder.
 
-    Kodi wraps remote images as image://<encoded url>/; those are returned as
-    the plain URL. Kodi's own placeholders (DefaultVideo.png …) are dropped.
+    Kodi always wraps images as image://<encoded value>/. They are loaded
+    through Home Assistant's image proxy, which asks Kodi; that also works for
+    images only Kodi can reach. A skin placeholder such as
+    image://DefaultVideo.png/ has nothing useful to show.
     """
     if not image:
         return None
     if image.startswith("image://"):
-        inner = unquote(image.removeprefix("image://").removesuffix("/"))
-        if inner.startswith(("http://", "https://")):
-            return inner
-        return image
-    if image.startswith(("http://", "https://")):
-        return image
-    return None  # a skin placeholder such as "DefaultVideo.png"
+        inner = unquote(image.removeprefix("image://").split("/", 1)[0])
+        if "://" not in inner and "/" not in inner and "\\" not in inner:
+            return None  # a skin placeholder, not a file
+    return image
 
 
 def _needs_title(raw: dict[str, Any]) -> bool:
