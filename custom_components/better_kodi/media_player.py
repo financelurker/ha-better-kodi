@@ -1,6 +1,8 @@
 """Better Kodi media player: mirrors a Kodi entity and adds queue features."""
 
+import asyncio
 from collections.abc import Awaitable
+import contextlib
 from datetime import datetime
 import logging
 import re
@@ -11,6 +13,7 @@ from homeassistant.components import media_source
 from homeassistant.components.media_player import (
     ATTR_MEDIA_CONTENT_ID,
     ATTR_MEDIA_CONTENT_TYPE,
+    DATA_COMPONENT,
     DOMAIN as MEDIA_PLAYER_DOMAIN,
     SERVICE_BROWSE_MEDIA,
     BrowseError,
@@ -39,6 +42,7 @@ from homeassistant.const import (
     SERVICE_VOLUME_MUTE,
     SERVICE_VOLUME_SET,
     SERVICE_VOLUME_UP,
+    STATE_OFF,
     STATE_UNAVAILABLE,
     STATE_UNKNOWN,
 )
@@ -60,12 +64,16 @@ from .const import (
     ATTR_QUEUE_LENGTH,
     ATTR_QUEUE_POSITION,
     CONF_ASSIST_MIGRATED,
+    CONF_WAKE,
+    CONF_WAKE_TIMEOUT,
+    DEFAULT_WAKE_TIMEOUT,
     DOMAIN,
     LIBRARY_ID_KEYS,
     QUEUE_CONTENT_ID,
     QUEUE_CONTENT_TYPE,
     QUEUE_ITEM_CONTENT_TYPE,
     QUEUE_ITEM_PREFIX,
+    READY_TIMEOUT,
 )
 from .jellyfin import (
     ADDON_JELLYFIN,
@@ -96,6 +104,7 @@ OWN_FEATURES = (
 CHOICES_PREFIX = "better_kodi://choose/"
 ENQUEUE_PREFIX = "better_kodi://enqueue/"
 CHOICE_ORDER = ("play", "next", "add", "replace")
+READY_POLL_INTERVAL = 1.0
 LINK_IN_TEXT = re.compile(r"https?://\S+")
 TRAILING_PUNCTUATION = ".,;:!?)]}>'\"»“”"
 PLAYABLE_SCHEMES = frozenset({"http", "https", *KODI_PATH_SCHEMES})
@@ -401,6 +410,7 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
     ) -> None:
         """Play or queue media, resolving page URLs (see docs/DESIGN.md)."""
         mode = EnqueueMode(enqueue) if enqueue else EnqueueMode.PLAY
+        await self._async_wake_kodi()
 
         media_id = extract_link(media_id)
         if media_id.startswith(ENQUEUE_PREFIX):
@@ -474,6 +484,56 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
             file = url
         self._data.queue.known.remember(file, jellyfin_item.title, jellyfin_item.thumbnail)
         return {"file": file}
+
+    async def _async_wake_kodi(self) -> None:
+        """Wake Kodi first if it is off (suspended), then wait until it answers.
+
+        "Turn on" runs the user's Kodi turn-on automation (for example Wake on
+        LAN). Kodi counts as awake once the Kodi entity is no longer "off".
+        """
+        options = self._entry.options
+        source = self.hass.states.get(self._source_entity_id)
+        if not options.get(CONF_WAKE, True) or source is None or source.state != STATE_OFF:
+            return
+        timeout = options.get(CONF_WAKE_TIMEOUT, DEFAULT_WAKE_TIMEOUT)
+        awake = asyncio.Event()
+
+        @callback
+        def on_change(event: Event[EventStateChangedData]) -> None:
+            new = event.data["new_state"]
+            if new is not None and new.state not in (STATE_OFF, STATE_UNAVAILABLE, STATE_UNKNOWN):
+                awake.set()
+
+        unsubscribe = async_track_state_change_event(self.hass, [self._source_entity_id], on_change)
+        try:
+            _LOGGER.debug("%s is off; waking it before sending", self._source_entity_id)
+            await self._forward(SERVICE_TURN_ON)
+            async with asyncio.timeout(timeout):
+                await awake.wait()
+        except TimeoutError as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="wake_timeout",
+                translation_placeholders={
+                    "entity_id": self._source_entity_id,
+                    "seconds": str(timeout),
+                },
+            ) from err
+        finally:
+            unsubscribe()
+
+        # The Kodi integration may report Kodi before its web server answers.
+        # If it still doesn't, the next request reports the connection error.
+        with contextlib.suppress(TimeoutError):
+            async with asyncio.timeout(READY_TIMEOUT):
+                while True:
+                    try:
+                        await self._data.client.ping()
+                    except KodiError:
+                        await asyncio.sleep(READY_POLL_INTERVAL)
+                    else:
+                        break
+        await self._data.async_get_addons(force=True)
 
     async def async_clear_playlist(self) -> None:
         """Clear the video queue."""
@@ -549,6 +609,11 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
         target = destination
         target_data = self._target_data(target)
         snapshot: HandoverSnapshot = await self._run(self._data.queue.snapshot())
+        if isinstance(
+            target_entity := self.hass.data[DATA_COMPONENT].get_entity(target),
+            BetterKodiMediaPlayer,
+        ):
+            await target_entity._async_wake_kodi()
         try:
             resumed = await target_data.queue.restore(snapshot, resume=resume)
         except QueueError as err:

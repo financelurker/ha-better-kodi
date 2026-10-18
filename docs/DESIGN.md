@@ -26,7 +26,11 @@ When Better Kodi is set up, it reads host, ports and credentials from the config
 
 Reading another integration's config entry data couples us to its internal keys. Accepted: if Core changes them, pre-filling breaks until Better Kodi is updated; already stored entries keep working.
 
-#### Kodi switched off, wrong password, Kodi entity gone
+#### Waking Kodi before sending
+
+Before `play_media` (which also covers the buttons, media browser choices and queue jumps) and on the destination of a handover: if the Kodi entity's state is `off` and the option *Wake Kodi before sending* is on (default), Better Kodi calls `media_player.turn_on` on the Kodi entity. That fires the Kodi integration's turn-on trigger, which runs the user's turn-on automation (typically Wake on LAN). Better Kodi then waits until the Kodi entity's state is something other than `off`, `unavailable` or `unknown` (option *Wait at most*, default 120 s, 10–900 s), and then up to 30 s more until Kodi answers `JSONRPC.Ping`, because the Kodi integration may report Kodi before its web server answers. The add-on list is re-read afterwards. If Kodi does not wake in time, the call fails with an error naming the Kodi entity; nothing is sent. Changing the options reloads the entry.
+
+### Kodi switched off, wrong password, Kodi entity gone
 
 - Better Kodi starts even when Kodi doesn't answer, like the Kodi integration does. Otherwise `turn_on` (which runs the user's Kodi turn-on automation) would be unavailable exactly when it is needed. Add-ons and the queue are read once Kodi answers.
 - If Kodi rejects the credentials, setup fails with a re-authentication request.

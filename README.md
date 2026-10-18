@@ -52,6 +52,16 @@ What happens:
 - **Assist**: if the Kodi media player was exposed to Assist, the exposure and its aliases move to Better Kodi's media player, so voice commands reach the right one. Check under **Settings → Voice assistants → Expose**; see [Exposing entities to Assist](https://www.home-assistant.io/voice_control/voice_remote_expose_devices/).
 - When you remove Better Kodi, the Kodi media player is shown again and gets its Assist settings back.
 
+### Kodi suspended or off: woken up automatically
+
+If the Kodi media player is **off** when you send something (a link, a media browser item, a button, a handover to that Kodi), Better Kodi:
+
+1. switches it on, which runs your Kodi **turn-on** automation (for example Wake on LAN; set it up under the Kodi device's automations, trigger "Kodi turned on");
+2. waits until the Kodi media player is no longer off, and until Kodi answers;
+3. then sends.
+
+The action or button keeps running meanwhile. If Kodi isn't awake within the time limit, you get an error and the link stays in the Link field. Turn this off or change the limit (default 120 seconds) under **Settings → Devices & services → Better Kodi → Configure**.
+
 ### Good to know
 
 - Better Kodi starts even when Kodi (or the TV) is off, so you can switch it on through Better Kodi's media player.

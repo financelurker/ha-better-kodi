@@ -136,6 +136,9 @@
     },
     "no_player": {
       "message": "Better Kodi's media player is not available."
+    },
+    "wake_timeout": {
+      "message": "Kodi did not wake up within {seconds} seconds ({entity_id} is still off). Check your Kodi turn-on automation (for example Wake on LAN) under the Kodi device's automations."
     }
   },
   "services": {
@@ -208,6 +211,22 @@
         "next": "⏭ Play next",
         "add": "➕ Add to queue",
         "replace": "⟲ Replace queue"
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Waking Kodi",
+        "description": "When Kodi is off (for example suspended) and you send something to it, Better Kodi can switch it on first and send once it is awake.",
+        "data": {
+          "wake_on_send": "Wake Kodi before sending",
+          "wake_timeout": "Wait at most"
+        },
+        "data_description": {
+          "wake_on_send": "Runs the turn-on of the Kodi media player, which starts your Kodi turn-on automation (for example Wake on LAN), and waits until the Kodi media player is no longer off.",
+          "wake_timeout": "How long to wait for Kodi to wake up before giving up."
+        }
       }
     }
   }
