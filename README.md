@@ -209,6 +209,16 @@ Media from Home Assistant's media browser is passed to Kodi as a signed link tha
 
 See [docs/DESIGN.md](docs/DESIGN.md).
 
+## Releases
+
+The GitHub release tag is the only source of the version; nothing in the repository holds it (`manifest.json` keeps the placeholder `0.0.0`, which Home Assistant needs to load the integration).
+
+1. Create a release on GitHub with a tag such as `v1.2.3` (pre-releases work the same way).
+2. The *Release* workflow takes the version from the tag (without the leading `v`; it stops with an error if the tag isn't a version number), writes it into `manifest.json`, packs the integration as `better_kodi.zip` and attaches it to the release.
+3. HACS installs that ZIP (`zip_release` in `hacs.json`), so Home Assistant shows the release version.
+
+To rebuild the ZIP of an existing release, run the *Release* workflow under **Actions → Release → Run workflow** with the release's tag.
+
 ## Development
 
 ```bash

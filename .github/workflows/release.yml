@@ -1,0 +1,79 @@
+name: Release
+
+# The GitHub release tag is the only source of the version. This workflow
+# writes it into manifest.json and attaches <domain>.zip to the release;
+# HACS installs that ZIP ("zip_release" in hacs.json).
+
+on:
+  release:
+    types: [published] # also pre-releases
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag of an existing release whose ZIP should be rebuilt"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  zip:
+    name: Build and attach ZIP
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Check that the release exists
+        run: gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null
+
+      - name: Read version from tag
+        id: version
+        shell: bash
+        run: |
+          version="${TAG#v}"
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?([-+.]?[0-9A-Za-z][0-9A-Za-z.+-]*)?$ ]]; then
+            echo "::error title=Not a version::The tag '$TAG' is not a version number (expected for example v1.2.3, 1.2.3 or v1.2.3-beta.1)."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Find integration
+        id: domain
+        shell: bash
+        run: |
+          dirs=(custom_components/*/)
+          if [ "${#dirs[@]}" -ne 1 ] || [ ! -f "${dirs[0]}manifest.json" ]; then
+            echo "::error::Expected exactly one integration with a manifest.json in custom_components/."
+            exit 1
+          fi
+          echo "domain=$(basename "${dirs[0]}")" >> "$GITHUB_OUTPUT"
+
+      - name: Write version into manifest.json
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          DOMAIN: ${{ steps.domain.outputs.domain }}
+        run: |
+          manifest="custom_components/$DOMAIN/manifest.json"
+          jq --arg version "$VERSION" '.version = $version' "$manifest" > manifest.tmp
+          mv manifest.tmp "$manifest"
+          jq -e --arg version "$VERSION" '.version == $version' "$manifest" > /dev/null
+
+      - name: Build ZIP
+        shell: bash
+        env:
+          DOMAIN: ${{ steps.domain.outputs.domain }}
+        run: |
+          (cd "custom_components/$DOMAIN" && zip -r -q "$GITHUB_WORKSPACE/$DOMAIN.zip" . -x "*__pycache__*" "*.pyc")
+          unzip -l "$DOMAIN.zip"
+
+      - name: Attach ZIP to the release
+        env:
+          DOMAIN: ${{ steps.domain.outputs.domain }}
+        run: gh release upload "$TAG" "$DOMAIN.zip" --clobber --repo "$GITHUB_REPOSITORY"
