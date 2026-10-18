@@ -65,7 +65,7 @@ A resolver turns a page URL into something Kodi can play. They are tried in orde
 | --- | --- | --- | --- |
 | YouTube video, Shorts, live, `youtu.be` | `plugin.video.youtube` | `plugin://plugin.video.youtube/play/?video_id=…` | yes |
 | YouTube playlist | `plugin.video.youtube` | `plugin://plugin.video.youtube/play/?playlist_id=…&order=default&action=play` | play now only |
-| Rumble | none | Direct video URL from Rumble's embed API (resolved in Home Assistant, like Cast Kodi does) | yes |
+| Rumble (**not working yet**, postponed) | none | Direct video URL from Rumble's embed API (resolved in Home Assistant, like Cast Kodi does). In the first real test the queue showed `playlist.m3u8`; not usable yet. | – |
 | Jellyfin web link (`…#/details?id=…`) | `plugin.video.jellyfin` (Jellyfin for Kodi) | `plugin://plugin.video.jellyfin/?mode=play&id=…` | yes |
 | Jellyfin web link | `plugin.video.jellycon` (JellyCon) | `plugin://plugin.video.jellycon/?mode=PLAY&item_id=…` | play now only (JellyCon starts playback itself) |
 | Direct media URL (`.mp4`, `.mkv`, `.m3u8`, …) and Home Assistant media sources | none | passed through | yes |
@@ -82,7 +82,9 @@ Titles and thumbnails: Kodi labels an add-on item that hasn't been played yet wi
 - Links played through Better Kodi: YouTube titles from YouTube's oEmbed endpoint (no API key), Rumble titles from its embed API.
 - Entries added by other apps (Cast Kodi, Yatse, …) or before a restart: when the queue is read, YouTube add-on paths (`video_id`, `playlist_id`, `uri2addon`) and SendToKodi paths with a YouTube link are looked up via oEmbed.
 
-Only entries without a title are looked up: Kodi leaves `title` empty for unplayed paths, while entries an add-on filled in (for example the items of a YouTube playlist) keep their title. At most 25 entries are looked up per read, 4 at a time, and the same file is never looked up twice at once. Results are kept in memory (up to 2000). A lookup that found nothing, failed or answered oddly is tried again after 10 minutes; a timeout on the next read. Kodi label formatting such as `[B]…[/B]` is removed.
+Only entries without a title are looked up: Kodi leaves `title` empty for unplayed paths, while entries an add-on filled in (for example the items of a YouTube playlist) keep their title. At most 25 entries are looked up per read, 4 at a time, and the same file is never looked up twice at once. Covers in the Queue folder, in this order: an image Better Kodi remembered (YouTube oEmbed, Jellyfin), Kodi's image of the entry (a wrapped web image `image://<encoded url>/` is used as the plain URL; Kodi's own images such as `smb://` art go through Home Assistant's image proxy; skin placeholders like `DefaultVideo.png` are dropped), YouTube's standard image `https://i.ytimg.com/vi/<id>/hqdefault.jpg` for YouTube entries, and for the playing entry the Kodi entity's picture (Kodi often only has an image for the player, not for the playlist entry).
+
+Results are kept in memory (up to 2000). A lookup that found nothing, failed or answered oddly is tried again after 10 minutes; a timeout on the next read. Kodi label formatting such as `[B]…[/B]` is removed.
 
 ## Controls in the user interface
 

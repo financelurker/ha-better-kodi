@@ -4,7 +4,7 @@ Enhanced Kodi integration for Home Assistant: play, play next or enqueue URLs (Y
 
 Better Kodi does not replace the built-in Kodi integration. It sits on top of it, like Better Thermostat does for thermostats: you pick a Kodi media player, and Better Kodi gives you a media player that does everything the original does, plus:
 
-- **Play links** from YouTube, Rumble, Jellyfin and direct media URLs: play now, play next, or add to the end of the queue (`enqueue: play | next | add | replace`)
+- **Play links** from YouTube, Jellyfin and direct media URLs: play now, play next, or add to the end of the queue (`enqueue: play | next | add | replace`)
 - **The queue in the media browser**, updated live: see what's coming, jump to an item
 - **Queue services**: read the queue, remove and move items
 - **Handover**: continue the current video, with its whole queue and at the same position, on another Kodi
@@ -180,12 +180,14 @@ Handover uses file paths, so it also works when the two Kodis have separate libr
 | --- | --- | --- | --- |
 | YouTube videos, Shorts, live, `youtu.be` | YouTube add-on (`plugin.video.youtube`) | ✓ | ✓ |
 | YouTube playlists | YouTube add-on | ✓ | – |
-| Rumble videos | nothing (resolved in Home Assistant) | ✓ | ✓ |
+| Rumble videos (**not working yet**, see below) | nothing (resolved in Home Assistant) | – | – |
 | Jellyfin web links (`…/web/#/details?id=…`) | Jellyfin for Kodi (`plugin.video.jellyfin`) | ✓ | ✓ |
 | Jellyfin web links | JellyCon (`plugin.video.jellycon`) | ✓ | – |
 | Direct media URLs (`.mp4`, `.mkv`, `.m3u8`, …), Kodi paths (`smb://`, `nfs://`, `plugin://`) | nothing | ✓ | ✓ |
 | Media from Home Assistant's media browser | nothing | ✓ | ✓ |
 | Other web pages | SendToKodi (`plugin.video.sendtokodi`) | ✓ | ✓ |
+
+**Rumble is not working yet.** Links are recognized, but the result is not usable so far (the queue shows `playlist.m3u8`). Support is postponed; until then, use SendToKodi or Cast Kodi for Rumble.
 
 Better Kodi checks which add-ons are installed and enabled in Kodi. If a YouTube link needs the YouTube add-on and it's missing, SendToKodi is used when it is installed; otherwise you get an error that names the missing add-on. Jellyfin links always need one of the Jellyfin add-ons, because they need your Jellyfin login.
 

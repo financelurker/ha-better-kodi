@@ -326,3 +326,26 @@ async def test_lookups_are_limited_and_not_doubled(kodi: FakeKodi) -> None:
     assert len(calls) == queue_module.MAX_LOOKUPS_PER_READ  # and nothing twice
     await queue.items()
     assert len(calls) == 40
+
+
+async def test_queue_covers(kodi: FakeKodi) -> None:
+    """Covers: remembered image, Kodi's wrapped web image, YouTube's standard image."""
+    queue = KodiQueue(kodi)  # type: ignore[arg-type]
+    youtube = "plugin://plugin.video.youtube/play/?video_id=dQw4w9WgXcQ"
+    kodi.playlist = [
+        {
+            "file": "plugin://x/a",
+            "label": "a",
+            "thumbnail": "image://https%3a%2f%2fimg.example%2fa.jpg/",
+        },
+        {"file": "plugin://x/b", "label": "b", "thumbnail": "DefaultVideo.png"},
+        {"file": youtube, "label": "play", "thumbnail": ""},
+        {"file": "smb://nas/c.mkv", "label": "c", "thumbnail": "image://smb%3a%2f%2fnas%2fc.jpg/"},
+    ]
+    queue.known.remember("plugin://x/b", "B", "https://img.example/b.jpg")
+    assert [item.thumbnail for item in await queue.items()] == [
+        "https://img.example/a.jpg",
+        "https://img.example/b.jpg",
+        "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
+        "image://smb%3a%2f%2fnas%2fc.jpg/",  # served through Home Assistant's proxy
+    ]

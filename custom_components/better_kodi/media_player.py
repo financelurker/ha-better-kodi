@@ -710,7 +710,10 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
                 title=f"▶ {item.title}" if item.current else item.title,
                 can_play=True,
                 can_expand=False,
-                thumbnail=self._queue_thumbnail(item.position, item.thumbnail),
+                thumbnail=self._queue_thumbnail(item.position, item.thumbnail)
+                # Kodi often has no image for the playlist entry that plays,
+                # only for the player; that one is the Kodi entity's picture.
+                or (self.entity_picture if item.current else None),
             )
             for item in items
         ]

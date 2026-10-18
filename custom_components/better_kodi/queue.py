@@ -11,10 +11,11 @@ from enum import StrEnum
 import logging
 import time
 from typing import Any
+from urllib.parse import unquote
 
 from .const import LIBRARY_ID_KEYS, VIDEO_PLAYLIST
 from .kodi_client import KodiClient, KodiRpcError
-from .resolvers import strip_kodi_markup
+from .resolvers import strip_kodi_markup, youtube_thumbnail
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -219,7 +220,9 @@ class KodiQueue:
                     title=title,
                     file=file,
                     media_type=raw.get("type") or "unknown",
-                    thumbnail=raw.get("thumbnail") or known_thumbnail or None,
+                    thumbnail=known_thumbnail
+                    or _kodi_image(raw.get("thumbnail"))
+                    or youtube_thumbnail(file),
                     duration=raw.get("duration") or None,
                     current=status.in_queue and status.position == index,
                 )
@@ -452,6 +455,24 @@ def portable_item(raw: dict[str, Any]) -> dict[str, Any] | None:
     if key and raw.get("id") is not None:
         return {key: raw["id"]}
     return None
+
+
+def _kodi_image(image: str | None) -> str | None:
+    """Return a usable image from Kodi's image path, or None.
+
+    Kodi wraps remote images as image://<encoded url>/; those are returned as
+    the plain URL. Kodi's own placeholders (DefaultVideo.png …) are dropped.
+    """
+    if not image:
+        return None
+    if image.startswith("image://"):
+        inner = unquote(image.removeprefix("image://").removesuffix("/"))
+        if inner.startswith(("http://", "https://")):
+            return inner
+        return image
+    if image.startswith(("http://", "https://")):
+        return image
+    return None  # a skin placeholder such as "DefaultVideo.png"
 
 
 def _needs_title(raw: dict[str, Any]) -> bool:

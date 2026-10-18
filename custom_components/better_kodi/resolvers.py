@@ -383,6 +383,13 @@ def youtube_from_kodi_path(file: str) -> tuple[str, str] | None:
     return None
 
 
+def youtube_thumbnail(file: str | None) -> str | None:
+    """Return YouTube's standard image of a video entry, without asking YouTube."""
+    if file and (youtube := youtube_from_kodi_path(file)) and youtube[0] == "video":
+        return f"https://i.ytimg.com/vi/{youtube[1]}/hqdefault.jpg"
+    return None
+
+
 async def async_lookup_title(
     session: aiohttp.ClientSession, file: str
 ) -> tuple[str | None, str | None] | None:
