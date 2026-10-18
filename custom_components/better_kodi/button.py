@@ -9,7 +9,7 @@ from homeassistant.components.media_player import (
     SERVICE_PLAY_MEDIA,
     MediaPlayerEnqueue,
 )
-from homeassistant.const import ATTR_ENTITY_ID
+from homeassistant.const import ATTR_ENTITY_ID, STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
@@ -47,7 +47,10 @@ class BetterKodiLinkButton(BetterKodiEntity, ButtonEntity):
         """Send the link to Kodi, then clear the field."""
         if not (link := self._data.link):
             raise ServiceValidationError(translation_domain=DOMAIN, translation_key="no_link")
-        if (player := self.player_entity_id()) is None:
+        player = self.player_entity_id()
+        state = self.hass.states.get(player) if player else None
+        if player is None or state is None or state.state == STATE_UNAVAILABLE:
+            # Home Assistant silently skips unavailable entities; don't clear the link then.
             raise ServiceValidationError(translation_domain=DOMAIN, translation_key="no_player")
         await self.hass.services.async_call(
             MEDIA_PLAYER_DOMAIN,

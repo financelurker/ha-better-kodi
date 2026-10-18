@@ -12,6 +12,11 @@ CONF_HIDE_SOURCE: Final = "hide_source"
 CONF_WS_PORT: Final = "ws_port"
 CONF_ASSIST_MIGRATED: Final = "assist_migrated"
 
+CONF_WAKE: Final = "wake_on_send"
+CONF_WAKE_TIMEOUT: Final = "wake_timeout"
+DEFAULT_WAKE_TIMEOUT: Final = 120
+READY_TIMEOUT: Final = 30  # after the Kodi entity is no longer "off"
+
 DEFAULT_PORT: Final = 8080
 DEFAULT_WS_PORT: Final = 9090
 

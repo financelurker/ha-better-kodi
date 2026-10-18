@@ -5,7 +5,12 @@ from typing import Any
 
 import probatio
 
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.config_entries import (
+    ConfigEntry,
+    ConfigFlow,
+    ConfigFlowResult,
+    OptionsFlowWithReload,
+)
 from homeassistant.const import (
     CONF_HOST,
     CONF_PASSWORD,
@@ -21,8 +26,11 @@ from .const import (
     CONF_HIDE_SOURCE,
     CONF_SOURCE_ENTITY_ID,
     CONF_SOURCE_ENTITY_UUID,
+    CONF_WAKE,
+    CONF_WAKE_TIMEOUT,
     CONF_WS_PORT,
     DEFAULT_PORT,
+    DEFAULT_WAKE_TIMEOUT,
     DEFAULT_WS_PORT,
     DOMAIN,
     KODI_DOMAIN,
@@ -107,6 +115,12 @@ class BetterKodiConfigFlow(ConfigFlow, domain=DOMAIN):
     """Set up Better Kodi for one Kodi entity."""
 
     VERSION = 1
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlowWithReload:
+        """Return the options flow."""
+        return BetterKodiOptionsFlow()
 
     def __init__(self) -> None:
         """Initialize the flow."""
@@ -255,3 +269,40 @@ class BetterKodiConfigFlow(ConfigFlow, domain=DOMAIN):
                 )
             )
         ]
+
+
+class BetterKodiOptionsFlow(OptionsFlowWithReload):
+    """Options: waking Kodi before sending something to it."""
+
+    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Show the options."""
+        if user_input is not None:
+            return self.async_create_entry(
+                data={
+                    CONF_WAKE: user_input[CONF_WAKE],
+                    CONF_WAKE_TIMEOUT: int(user_input[CONF_WAKE_TIMEOUT]),
+                }
+            )
+        options = self.config_entry.options
+        return self.async_show_form(
+            step_id="init",
+            data_schema=probatio.Schema(
+                {
+                    probatio.Required(
+                        CONF_WAKE, default=options.get(CONF_WAKE, True)
+                    ): selector.BooleanSelector(),
+                    probatio.Required(
+                        CONF_WAKE_TIMEOUT,
+                        default=options.get(CONF_WAKE_TIMEOUT, DEFAULT_WAKE_TIMEOUT),
+                    ): selector.NumberSelector(
+                        selector.NumberSelectorConfig(
+                            min=10,
+                            max=900,
+                            step=5,
+                            unit_of_measurement="s",
+                            mode=selector.NumberSelectorMode.BOX,
+                        )
+                    ),
+                }
+            ),
+        )

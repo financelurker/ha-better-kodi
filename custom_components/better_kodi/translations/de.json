@@ -135,7 +135,19 @@
       "message": "Füge zuerst einen Link in das Feld „Link“ ein."
     },
     "no_player": {
-      "message": "Der Media-Player von Better Kodi ist nicht verfügbar."
+      "message": "Der Media-Player von Better Kodi ist nicht verfügbar, daher wurde nichts gesendet. Ist der Kodi-Media-Player verfügbar?"
+    },
+    "wake_timeout": {
+      "message": "Kodi ist nicht innerhalb von {seconds} Sekunden aufgewacht ({entity_id} ist noch ausgeschaltet). Prüfe deine Einschalt-Automation für Kodi (zum Beispiel Wake on LAN) bei den Automationen des Kodi-Geräts."
+    },
+    "no_turn_on_automation": {
+      "message": "Kodi kann nicht geweckt werden: Für {entity_id} gibt es keine Automation „Kodi eingeschaltet“. Lege eine bei den Automationen des Kodi-Geräts an (zum Beispiel mit Wake on LAN) oder schalte das Aufwecken in den Optionen von Better Kodi ab."
+    },
+    "nothing_playing": {
+      "message": "Auf diesem Kodi läuft gerade nichts."
+    },
+    "wake_cancelled": {
+      "message": "Das Aufwecken von Kodi wurde abgebrochen (Better Kodi wurde neu geladen oder Home Assistant wird beendet). Bitte versuche es noch einmal."
     }
   },
   "services": {
@@ -208,6 +220,22 @@
         "next": "⏭ Als Nächstes abspielen",
         "add": "➕ Zur Warteschlange hinzufügen",
         "replace": "⟲ Warteschlange ersetzen"
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Kodi aufwecken",
+        "description": "Ist Kodi aus (zum Beispiel im Ruhezustand) und du schickst etwas hin, kann Better Kodi es zuerst einschalten und erst senden, wenn es wach ist.",
+        "data": {
+          "wake_on_send": "Kodi vor dem Senden aufwecken",
+          "wake_timeout": "Höchstens warten"
+        },
+        "data_description": {
+          "wake_on_send": "Schaltet den Kodi-Media-Player ein, was deine Einschalt-Automation für Kodi startet (zum Beispiel Wake on LAN), und wartet, bis der Kodi-Media-Player nicht mehr aus ist.",
+          "wake_timeout": "Wie lange auf das Aufwachen von Kodi gewartet wird, bevor abgebrochen wird."
+        }
       }
     }
   }

@@ -4,7 +4,7 @@ Enhanced Kodi integration for Home Assistant: play, play next or enqueue URLs (Y
 
 Better Kodi does not replace the built-in Kodi integration. It sits on top of it, like Better Thermostat does for thermostats: you pick a Kodi media player, and Better Kodi gives you a media player that does everything the original does, plus:
 
-- **Play links** from YouTube, Rumble, Jellyfin and direct media URLs: play now, play next, or add to the end of the queue (`enqueue: play | next | add | replace`)
+- **Play links** from YouTube, Jellyfin and direct media URLs: play now, play next, or add to the end of the queue (`enqueue: play | next | add | replace`)
 - **The queue in the media browser**, updated live: see what's coming, jump to an item
 - **Queue services**: read the queue, remove and move items
 - **Handover**: continue the current video, with its whole queue and at the same position, on another Kodi
@@ -51,6 +51,16 @@ What happens:
 - The Kodi media player is **hidden**. It keeps working; Better Kodi uses it.
 - **Assist**: if the Kodi media player was exposed to Assist, the exposure and its aliases move to Better Kodi's media player, so voice commands reach the right one. Check under **Settings → Voice assistants → Expose**; see [Exposing entities to Assist](https://www.home-assistant.io/voice_control/voice_remote_expose_devices/).
 - When you remove Better Kodi, the Kodi media player is shown again and gets its Assist settings back.
+
+### Kodi suspended or off: woken up automatically
+
+If the Kodi media player is **off** when you send something (a link, a media browser item, a button, a handover to that Kodi), Better Kodi:
+
+1. switches it on, which runs your Kodi **turn-on** automation (for example Wake on LAN; set it up under the Kodi device's automations, trigger "Kodi turned on");
+2. waits until the Kodi media player is no longer off (and up to 30 seconds more until Kodi answers);
+3. then sends.
+
+Several links sent while Kodi wakes share one wake-up, so your automation runs only once. Without any "Kodi turned on" automation you get an error right away. The action or button keeps running meanwhile. If Kodi isn't awake within the time limit, you get an error and the link stays in the Link field. Turn this off or change the limit (default 120 seconds) under **Settings → Devices & services → Better Kodi → Configure**.
 
 ### Good to know
 
@@ -180,12 +190,14 @@ Handover uses file paths, so it also works when the two Kodis have separate libr
 | --- | --- | --- | --- |
 | YouTube videos, Shorts, live, `youtu.be` | YouTube add-on (`plugin.video.youtube`) | ✓ | ✓ |
 | YouTube playlists | YouTube add-on | ✓ | – |
-| Rumble videos | nothing (resolved in Home Assistant) | ✓ | ✓ |
+| Rumble videos (**not working yet**, see below) | nothing (resolved in Home Assistant) | – | – |
 | Jellyfin web links (`…/web/#/details?id=…`) | Jellyfin for Kodi (`plugin.video.jellyfin`) | ✓ | ✓ |
 | Jellyfin web links | JellyCon (`plugin.video.jellycon`) | ✓ | – |
 | Direct media URLs (`.mp4`, `.mkv`, `.m3u8`, …), Kodi paths (`smb://`, `nfs://`, `plugin://`) | nothing | ✓ | ✓ |
 | Media from Home Assistant's media browser | nothing | ✓ | ✓ |
 | Other web pages | SendToKodi (`plugin.video.sendtokodi`) | ✓ | ✓ |
+
+**Rumble is not working yet.** Links are recognized, but the result is not usable so far (the queue shows `playlist.m3u8`). Support is postponed; until then, use SendToKodi or Cast Kodi for Rumble.
 
 Better Kodi checks which add-ons are installed and enabled in Kodi. If a YouTube link needs the YouTube add-on and it's missing, SendToKodi is used when it is installed; otherwise you get an error that names the missing add-on. Jellyfin links always need one of the Jellyfin add-ons, because they need your Jellyfin login.
 

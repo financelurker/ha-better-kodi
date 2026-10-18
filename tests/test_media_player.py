@@ -702,3 +702,25 @@ async def test_unknown_choice_is_a_clear_error(hass: HomeAssistant, player: str)
     with pytest.raises(ServiceValidationError) as err:
         await play_media(hass, player, "better_kodi://enqueue/later/movie/1", "movie")
     assert err.value.translation_key == "queue_error"
+
+
+async def test_playing_queue_entry_uses_the_player_picture(
+    hass: HomeAssistant, kodi_source: KodiSource, fakes: dict[str, FakeKodi], player: str
+) -> None:
+    """Kodi often has no image for the playing playlist entry, only for the player."""
+    await play_media(hass, player, "https://cdn.example/a.mp4")
+    await play_media(hass, player, "https://cdn.example/b.mp4", enqueue="add")
+    folder = await entity_of(hass, player).async_browse_media(QUEUE_CONTENT_TYPE, QUEUE_CONTENT_ID)
+    playing, waiting = folder.children
+    assert playing.thumbnail == hass.states.get(kodi_source.entity_id).attributes["entity_picture"]
+    assert waiting.thumbnail is None
+
+    # The player's picture also beats an image of the playing entry itself.
+    entity = entity_of(hass, player)
+    entity._data.queue.known.remember("https://cdn.example/a.mp4", "A", "https://img/a.jpg")
+    fakes[kodi_source.host].playlist[0]["thumbnail"] = "image://smb%3a%2f%2fnas%2fa.jpg/"
+    folder = await entity.async_browse_media(QUEUE_CONTENT_TYPE, QUEUE_CONTENT_ID)
+    assert (
+        folder.children[0].thumbnail
+        == (hass.states.get(kodi_source.entity_id).attributes["entity_picture"])
+    )
