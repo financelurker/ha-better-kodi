@@ -27,6 +27,7 @@ from .assist import transfer_exposure
 from .const import CONF_HIDE_SOURCE, CONF_SOURCE_ENTITY_UUID, CONF_WS_PORT, DOMAIN
 from .kodi_client import KodiAuthError, KodiClient, KodiError
 from .queue import KodiQueue
+from .resolvers import async_lookup_title
 from .services import async_setup_services
 
 _LOGGER = logging.getLogger(__name__)
@@ -122,11 +123,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: BetterKodiConfigEntry) -
         # starts, so that turn_on works; the rest follows once Kodi answers.
         _LOGGER.debug("Kodi at %s is not reachable yet: %s", entry.data[CONF_HOST], err)
 
+    web_session = async_get_clientsession(hass)
+
+    async def look_up_title(file: str) -> tuple[str | None, str | None] | None:
+        return await async_lookup_title(web_session, file)
+
     data = BetterKodiData(
         client=client,
-        queue=KodiQueue(client),
+        queue=KodiQueue(client, look_up_title),
         source_entity_id=source_entity_id,
-        web_session=async_get_clientsession(hass),
+        web_session=web_session,
     )
     await data.async_get_addons(force=True)
     entry.runtime_data = data

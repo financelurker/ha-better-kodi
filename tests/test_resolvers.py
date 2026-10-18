@@ -12,10 +12,13 @@ from custom_components.better_kodi.resolvers import (
     YOUTUBE_OEMBED,
     ResolveContext,
     ResolveError,
+    async_lookup_title,
     async_resolve,
     parse_jellyfin_item_id,
     parse_youtube,
     pick_rumble_stream,
+    strip_kodi_markup,
+    youtube_from_kodi_path,
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -235,3 +238,53 @@ async def test_jellyfin_without_addon_does_not_use_sendtokodi(hass: HomeAssistan
         await async_resolve(
             f"https://j/web/#/details?id={JELLYFIN_ID}", context(hass, ADDON_SENDTOKODI)
         )
+
+
+@pytest.mark.parametrize(
+    ("file", "expected"),
+    [
+        (f"plugin://plugin.video.youtube/play/?video_id={VIDEO_ID}", ("video", VIDEO_ID)),
+        (
+            f"plugin://plugin.video.youtube/play/?video_id={VIDEO_ID}&incognito=false",
+            ("video", VIDEO_ID),
+        ),
+        (
+            f"plugin://plugin.video.youtube/?action=play_video&videoid={VIDEO_ID}",
+            ("video", VIDEO_ID),
+        ),
+        (
+            "plugin://plugin.video.youtube/play/?playlist_id=PL9&order=default&play=1",
+            ("playlist", "PL9"),
+        ),
+        (
+            "plugin://plugin.video.youtube/uri2addon/?uri=https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3D"
+            + VIDEO_ID,
+            ("video", VIDEO_ID),
+        ),
+        (f"plugin://plugin.video.sendtokodi/?https://youtu.be/{VIDEO_ID}", ("video", VIDEO_ID)),
+        (f"https://www.youtube.com/watch?v={VIDEO_ID}", ("video", VIDEO_ID)),
+        ("plugin://plugin.video.jellyfin/?mode=play&id=1", None),
+        ("smb://nas/film.mkv", None),
+    ],
+)
+def test_youtube_from_kodi_path(file: str, expected: tuple[str, str] | None) -> None:
+    assert youtube_from_kodi_path(file) == expected
+
+
+async def test_lookup_title(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> None:
+    aioclient_mock.get(YOUTUBE_OEMBED, json={"title": "Queued by Cast Kodi", "thumbnail_url": "t"})
+    session = async_get_clientsession(hass)
+    file = f"plugin://plugin.video.youtube/play/?video_id={VIDEO_ID}&incognito=false"
+    assert await async_lookup_title(session, file) == ("Queued by Cast Kodi", "t")
+    assert dict(aioclient_mock.mock_calls[0][1].query)["url"] == (
+        f"https://www.youtube.com/watch?v={VIDEO_ID}"
+    )
+    assert await async_lookup_title(session, "smb://nas/film.mkv") is None
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [("[B]Bold[/B] and [COLOR red]red[/COLOR]", "Bold and red"), ("Line[CR]break", "Line break")],
+)
+def test_strip_kodi_markup(text: str, expected: str) -> None:
+    assert strip_kodi_markup(text) == expected

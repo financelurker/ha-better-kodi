@@ -210,3 +210,46 @@ async def test_handover_gives_up_seeking(
     kodi.time = {"hours": 0, "minutes": 1, "seconds": 0, "milliseconds": 0}
     assert not await KodiQueue(target_kodi).restore(await queue.snapshot())  # type: ignore[arg-type]
     assert target_kodi.player_active
+
+
+async def test_titles_of_entries_added_by_other_apps(kodi: FakeKodi) -> None:
+    """Cast Kodi adds a YouTube path; Kodi only labels it "play"."""
+    looked_up: list[str] = []
+    youtube = "plugin://plugin.video.youtube/play/?video_id=dQw4w9WgXcQ"
+
+    async def lookup(file: str):
+        looked_up.append(file)
+        return ("Real title", "https://img/t.jpg") if file == youtube else None
+
+    queue = KodiQueue(kodi, lookup)  # type: ignore[arg-type]
+    await kodi.call(
+        "Playlist.Add",
+        {
+            "playlistid": 1,
+            "item": [{"file": youtube}, {"file": "plugin://x/unknown"}, {"movieid": 3}],
+        },
+    )
+    items = await queue.items()
+    assert [item.title for item in items] == ["Real title", "unknown", "movie 3"]
+    assert items[0].thumbnail == "https://img/t.jpg"
+
+    await queue.items()
+    assert sorted(looked_up) == sorted([youtube, "plugin://x/unknown"])  # each once
+
+
+async def test_title_lookup_timeout_is_retried(
+    kodi: FakeKodi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(queue_module, "TITLE_LOOKUP_TIMEOUT", 0.01)
+    calls = 0
+
+    async def slow(file: str):
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(1)
+
+    queue = KodiQueue(kodi, slow)  # type: ignore[arg-type]
+    await kodi.call("Playlist.Add", {"playlistid": 1, "item": {"file": "plugin://x/a"}})
+    assert [item.title for item in await queue.items()] == ["a"]
+    await queue.items()
+    assert calls == 2

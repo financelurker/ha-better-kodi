@@ -77,7 +77,12 @@ Installed and enabled add-ons are read with `Addons.GetAddons` (cached for 10 mi
 
 "Play now only" items (YouTube playlists, JellyCon) are always played with `replace`: their add-ons fill the video playlist themselves and clear it first. `next` and `add` are refused with an error.
 
-Titles and thumbnails: YouTube titles come from YouTube's oEmbed endpoint (no API key), Rumble titles from its embed API. They are remembered for the Queue folder, because Kodi shows add-on items only as paths until they are played.
+Titles and thumbnails: Kodi labels an add-on item that hasn't been played yet with a part of its path (for example `play` for a YouTube add-on path). Better Kodi therefore names queue entries itself, like Cast Kodi does:
+
+- Links played through Better Kodi: YouTube titles from YouTube's oEmbed endpoint (no API key), Rumble titles from its embed API.
+- Entries added by other apps (Cast Kodi, Yatse, …) or before a restart: when the queue is read, YouTube add-on paths (`video_id`, `playlist_id`, `uri2addon`) and SendToKodi paths with a YouTube link are looked up via oEmbed.
+
+Results are kept in memory (also failed lookups, so nothing is asked twice); a timeout is retried on the next read. Kodi label formatting such as `[B]…[/B]` is removed.
 
 ## Handover
 
