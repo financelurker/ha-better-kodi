@@ -404,8 +404,16 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
 
         media_id = extract_link(media_id)
         if media_id.startswith(ENQUEUE_PREFIX):
+            # The choice in the ID wins over an "enqueue" passed with it.
             mode_text, _, encoded = media_id.removeprefix(ENQUEUE_PREFIX).partition("/")
-            mode = EnqueueMode(mode_text)
+            try:
+                mode = EnqueueMode(mode_text)
+            except ValueError as err:
+                raise ServiceValidationError(
+                    translation_domain=DOMAIN,
+                    translation_key="queue_error",
+                    translation_placeholders={"error": f"Unknown choice {mode_text!r}"},
+                ) from err
             media_type, media_id = _decode(encoded)
         elif media_id.startswith(CHOICES_PREFIX):
             media_type, media_id = _decode(media_id.removeprefix(CHOICES_PREFIX))
@@ -458,11 +466,8 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
             return {"file": url}
         if (jellyfin_item := await async_get_item(self._data.web_session, stream)) is None:
             return {"file": url}
-        try:
-            if library_item := await async_find_in_kodi_library(self._data.client, jellyfin_item):
-                return library_item  # Kodi knows title and artwork itself
-        except KodiError:
-            pass
+        if library_item := await async_find_in_kodi_library(self._data.client, jellyfin_item):
+            return library_item  # Kodi knows title and artwork itself
         if ADDON_JELLYFIN in await self._data.async_get_addons():
             file = addon_path(jellyfin_item.item_id)
         else:

@@ -24,12 +24,6 @@ BUTTONS = {
     "add_to_queue": MediaPlayerEnqueue.ADD,
     "replace_queue": MediaPlayerEnqueue.REPLACE,
 }
-ICONS = {
-    "play_now": "mdi:play",
-    "play_next": "mdi:playlist-play",
-    "add_to_queue": "mdi:playlist-plus",
-    "replace_queue": "mdi:playlist-remove",
-}
 
 
 async def async_setup_entry(
@@ -48,7 +42,6 @@ class BetterKodiLinkButton(BetterKodiEntity, ButtonEntity):
         """Initialize a button for one way of queueing."""
         super().__init__(hass, entry, key)
         self._enqueue = BUTTONS[key]
-        self._attr_icon = ICONS[key]
 
     async def async_press(self) -> None:
         """Send the link to Kodi, then clear the field."""

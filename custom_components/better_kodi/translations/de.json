@@ -87,10 +87,10 @@
         "name": "Link jetzt abspielen"
       },
       "play_next": {
-        "name": "Link als Nächstes"
+        "name": "Link als Nächstes abspielen"
       },
       "add_to_queue": {
-        "name": "Link ans Ende"
+        "name": "Link zur Warteschlange hinzufügen"
       },
       "replace_queue": {
         "name": "Warteschlange durch Link ersetzen"
@@ -205,8 +205,8 @@
       "options": {
         "queue": "Warteschlange",
         "play": "▶ Jetzt abspielen",
-        "next": "⏭ Als Nächstes",
-        "add": "➕ Ans Ende",
+        "next": "⏭ Als Nächstes abspielen",
+        "add": "➕ Zur Warteschlange hinzufügen",
         "replace": "⟲ Warteschlange ersetzen"
       }
     }

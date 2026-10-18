@@ -49,6 +49,10 @@ EPISODE = {
             f"https://media.example/jellyfin/Videos/{JF_ID.upper()}/stream.mkv?api_key=K",
             JellyfinStream("https://media.example/jellyfin", JF_ID, "K"),
         ),
+        (
+            f"{SERVER}/Videos/{JF_ID}/stream?static=true&ApiKey=NEW",
+            JellyfinStream(SERVER, JF_ID, "NEW"),
+        ),
         (f"{SERVER}/Audio/{JF_ID}/universal?api_key=K", None),
         ("https://cdn.example/stream", None),
     ],
@@ -63,6 +67,7 @@ def test_parse_stream_url(url: str, expected: JellyfinStream | None) -> None:
         (EPISODE, "The Show – S01E02 – Pilot"),
         ({"Name": "Film", "Type": "Movie", "ProductionYear": 2024}, "Film (2024)"),
         ({"Name": "Clip", "Type": "Video"}, "Clip"),
+        ({"Name": "Odd", "Type": "Episode", "SeriesName": "S", "IndexNumber": "x"}, "S – Odd"),
     ],
 )
 def test_display_title(item: dict[str, Any], expected: str) -> None:
@@ -79,11 +84,9 @@ async def test_get_item(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
         thumbnail=f"{SERVER}/Items/{JF_ID}/Images/Primary?maxWidth=400",
         path=EPISODE["Path"],
     )
-    assert dict(aioclient_mock.mock_calls[0][1].query) == {
-        "ids": JF_ID,
-        "fields": "Path",
-        "api_key": "KEY",
-    }
+    _, url, _, headers = aioclient_mock.mock_calls[0]
+    assert dict(url.query) == {"ids": JF_ID, "fields": "Path"}  # no key in the URL
+    assert headers["Authorization"] == 'MediaBrowser Token="KEY"'
 
 
 async def test_get_item_failure(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> None:
@@ -136,11 +139,33 @@ async def test_find_direct_path_item_by_file_name() -> None:
     assert found == {"episodeid": 9}
 
 
+async def test_same_file_name_in_another_show_is_not_used() -> None:
+    """Kodi only compares file names; "S01E01.mkv" exists in many shows."""
+    kodi = FakeKodi()
+    kodi.library["episodes"] = [{"episodeid": 3, "file": "smb://nas/shows/Other Show/S01E01.mkv"}]
+    found = await async_find_in_kodi_library(  # type: ignore[arg-type]
+        kodi, item(path="/media/shows/The Show/S01E01.mkv")
+    )
+    assert found is None
+
+
+async def test_music_video() -> None:
+    kodi = FakeKodi()
+    kodi.library["musicvideos"] = [
+        {
+            "musicvideoid": 4,
+            "file": f"plugin://plugin.video.jellyfin/l/?filename=v.mp4&id={JF_ID}&mode=play",
+        }
+    ]
+    found = await async_find_in_kodi_library(kodi, item(kind="MusicVideo"))  # type: ignore[arg-type]
+    assert found == {"musicvideoid": 4}
+
+
 async def test_ambiguous_file_name_is_not_used() -> None:
     kodi = FakeKodi()
     kodi.library["movies"] = [
-        {"movieid": 1, "file": "smb://a/movie.mkv"},
-        {"movieid": 2, "file": "smb://b/movie.mkv"},
+        {"movieid": 1, "file": "smb://a/x/movie.mkv"},
+        {"movieid": 2, "file": "smb://b/x/movie.mkv"},
     ]
     found = await async_find_in_kodi_library(kodi, item(kind="Movie", path="/x/movie.mkv"))  # type: ignore[arg-type]
     assert found is None

@@ -26,6 +26,9 @@ START_WINDOW = 20.0
 SEEK_TIMEOUT = 15.0
 POLL_INTERVAL = 0.5
 TITLE_LOOKUP_TIMEOUT = 8.0
+LOOKUP_RETRY_AFTER = 600.0
+MAX_PARALLEL_LOOKUPS = 4
+MAX_LOOKUPS_PER_READ = 25
 
 type TitleLookup = Callable[[str], Awaitable[tuple[str | None, str | None] | None]]
 
@@ -107,8 +110,10 @@ class KnownMedia:
     """
 
     titles: dict[str, tuple[str | None, str | None]] = field(default_factory=dict)
-    unknown: set[str] = field(default_factory=set)
-    limit: int = 500
+    # file -> monotonic time of a lookup that found nothing; retried after a while,
+    # because the service may only have been unreachable.
+    unknown: dict[str, float] = field(default_factory=dict)
+    limit: int = 2000
 
     def remember(self, file: str | None, title: str | None, thumbnail: str | None) -> None:
         """Remember what a file is called."""
@@ -122,14 +127,22 @@ class KnownMedia:
         return self.titles.get(file or "", (None, None))
 
     def knows(self, file: str) -> bool:
-        """Return True if the file was looked up already, with or without result."""
-        return file in self.titles or file in self.unknown
+        """Return True if the file needs no lookup now."""
+        if file in self.titles:
+            return True
+        failed_at = self.unknown.get(file)
+        if failed_at is None:
+            return False
+        if time.monotonic() - failed_at > LOOKUP_RETRY_AFTER:
+            del self.unknown[file]
+            return False
+        return True
 
-    def forget_lookup_failure(self, file: str) -> None:
-        """Remember that a title lookup found nothing, so it is not repeated."""
-        self.unknown.add(file)
+    def lookup_failed(self, file: str) -> None:
+        """Remember that a lookup found nothing; it is tried again later."""
+        self.unknown[file] = time.monotonic()
         while len(self.unknown) > self.limit:
-            self.unknown.pop()
+            del self.unknown[next(iter(self.unknown))]
 
 
 class KodiQueue:
@@ -144,6 +157,8 @@ class KodiQueue:
         self.client = client
         self.known = KnownMedia()
         self._title_lookup = title_lookup
+        self._lookups_running: dict[str, asyncio.Task[None]] = {}
+        self._lookup_slots = asyncio.Semaphore(MAX_PARALLEL_LOOKUPS)
         self._lock = asyncio.Lock()
         self._started: tuple[float, int] | None = None  # (monotonic time, position)
 
@@ -192,7 +207,10 @@ class KodiQueue:
             file = raw.get("file") or None
             known_title, known_thumbnail = self.known.lookup(file)
             kodi_title = strip_kodi_markup(raw.get("title") or raw.get("label") or "")
-            title = known_title or kodi_title or file or f"#{index + 1}"
+            if file and _needs_title(raw):
+                title = known_title or kodi_title or file or f"#{index + 1}"
+            else:
+                title = kodi_title or known_title or file or f"#{index + 1}"
             if raw.get("showtitle") and raw.get("episode", -1) >= 0:
                 title = f"{raw['showtitle']} – {title}"
             items.append(
@@ -212,26 +230,40 @@ class KodiQueue:
         """Name entries whose title Kodi doesn't know yet (add-on paths)."""
         if self._title_lookup is None:
             return
-        files = {
-            file
-            for raw in raw_items
-            if (file := raw.get("file")) and not self.known.knows(file) and _needs_title(raw)
-        }
+        lookup = self._title_lookup
+        files = list(
+            dict.fromkeys(
+                file
+                for raw in raw_items
+                if (file := raw.get("file")) and _needs_title(raw) and not self.known.knows(file)
+            )
+        )[:MAX_LOOKUPS_PER_READ]
         if not files:
             return
 
         async def look_up(file: str) -> None:
-            try:
-                async with asyncio.timeout(TITLE_LOOKUP_TIMEOUT):
-                    found = await self._title_lookup(file)  # type: ignore[misc]
-            except TimeoutError:
-                return  # try again next time
+            async with self._lookup_slots:
+                try:
+                    async with asyncio.timeout(TITLE_LOOKUP_TIMEOUT):
+                        found = await lookup(file)
+                except TimeoutError:
+                    return  # try again next time
+                except Exception:  # a broken answer must not break the queue
+                    _LOGGER.debug("Title lookup for %s failed", file, exc_info=True)
+                    found = None
             if found is None:
-                self.known.forget_lookup_failure(file)
+                self.known.lookup_failed(file)
             else:
                 self.known.remember(file, *found)
 
-        await asyncio.gather(*(look_up(file) for file in files))
+        tasks = []
+        for file in files:
+            if (task := self._lookups_running.get(file)) is None:
+                task = asyncio.ensure_future(look_up(file))
+                self._lookups_running[file] = task
+                task.add_done_callback(lambda _, file=file: self._lookups_running.pop(file, None))
+            tasks.append(task)
+        await asyncio.gather(*tasks)
 
     # --- Changing -----------------------------------------------------------------
 
@@ -423,11 +455,14 @@ def portable_item(raw: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _needs_title(raw: dict[str, Any]) -> bool:
-    """Return True for entries that Kodi only knows by their path."""
+    """Return True for entries that Kodi only knows by their path.
+
+    Kodi leaves "title" empty for paths that haven't been played (their label is
+    a part of the path). Entries an add-on filled in have a title already.
+    """
     if raw.get("type") not in (None, "", "unknown"):
         return False  # library items have real titles
-    file = raw["file"]
-    return file.startswith("plugin://") or raw.get("title", "") in ("", file)
+    return raw.get("title", "") in ("", raw["file"])
 
 
 def _has_time(value: dict[str, int] | None) -> bool:

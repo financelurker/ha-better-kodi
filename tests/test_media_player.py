@@ -638,8 +638,8 @@ async def test_browser_offers_enqueue_choices(
     assert choices.title == "Film"
     assert [child.title for child in choices.children] == [
         "▶ Jetzt abspielen",
-        "⏭ Als Nächstes",
-        "➕ Ans Ende",
+        "⏭ Als Nächstes abspielen",
+        "➕ Zur Warteschlange hinzufügen",
         "⟲ Warteschlange ersetzen",
     ]
     assert all(child.thumbnail == "/thumb.jpg" for child in choices.children)
@@ -696,3 +696,9 @@ async def test_choices_after_restart_still_work(
     assert len(choices.children) == 4
     await play_media(hass, player, choices.children[0].media_content_id, "movie")
     assert fakes[kodi_source.host].playlist[0]["id"] == 21
+
+
+async def test_unknown_choice_is_a_clear_error(hass: HomeAssistant, player: str) -> None:
+    with pytest.raises(ServiceValidationError) as err:
+        await play_media(hass, player, "better_kodi://enqueue/later/movie/1", "movie")
+    assert err.value.translation_key == "queue_error"

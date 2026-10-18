@@ -28,6 +28,7 @@ _LOGGER = logging.getLogger(__name__)
 
 HTTP_TIMEOUT = aiohttp.ClientTimeout(total=10)
 ADDON_JELLYFIN = "plugin.video.jellyfin"
+PATH_PARTS_TO_MATCH = 2  # file name and its folder
 STREAM_PATH = re.compile(r"^(?P<prefix>.*)/Videos/(?P<id>[0-9a-fA-F]{32})/stream(?:\.\w+)?$")
 
 # Jellyfin item type -> (Kodi library method, result key, Kodi id key)
@@ -65,7 +66,9 @@ def parse_stream_url(url: str) -> JellyfinStream | None:
         return None
     query = {key.lower(): values[0] for key, values in parse_qs(parts.query).items()}
     server = f"{parts.scheme}://{parts.netloc}{match.group('prefix')}"
-    return JellyfinStream(server, match.group("id").lower(), query.get("api_key"))
+    # Jellyfin accepts "ApiKey"; "api_key" only while legacy authorization is on.
+    api_key = query.get("apikey") or query.get("api_key")
+    return JellyfinStream(server, match.group("id").lower(), api_key)
 
 
 def display_title(item: dict[str, Any]) -> str:
@@ -74,7 +77,7 @@ def display_title(item: dict[str, Any]) -> str:
     if item.get("Type") == "Episode":
         parts = [item["SeriesName"]] if item.get("SeriesName") else []
         season, episode = item.get("ParentIndexNumber"), item.get("IndexNumber")
-        if season is not None and episode is not None:
+        if isinstance(season, int) and isinstance(episode, int):
             parts.append(f"S{season:02d}E{episode:02d}")
         return " – ".join([*parts, name]) if name else " – ".join(parts)
     if year := item.get("ProductionYear"):
@@ -91,7 +94,9 @@ async def async_get_item(
     try:
         async with session.get(
             f"{stream.server}/Items",
-            params={"ids": stream.item_id, "fields": "Path", "api_key": stream.api_key},
+            params={"ids": stream.item_id, "fields": "Path"},
+            # Header instead of query, so the key never appears in a URL.
+            headers={"Authorization": f'MediaBrowser Token="{stream.api_key}"'},
             timeout=HTTP_TIMEOUT,
         ) as response:
             if response.status != 200:
@@ -132,24 +137,44 @@ async def async_find_in_kodi_library(
     if len(by_id) == 1:
         return {id_key: by_id[0][id_key]}
     if item.path:
-        file_name = re.split(r"[\\/]", item.path)[-1]
-        by_name = await _library_search(client, method, result_key, "is", file_name)
-        if len(by_name) == 1:
-            return {id_key: by_name[0][id_key]}
+        # Kodi's "filename" field is the file name only. File names like
+        # "S01E01.mkv" repeat across shows, so the folder must match too.
+        jellyfin_parts = _path_parts(item.path)
+        by_name = await _library_search(
+            client, method, result_key, "is", jellyfin_parts[-1], properties=["file"]
+        )
+        tail = jellyfin_parts[-PATH_PARTS_TO_MATCH:]
+        matches = [
+            found
+            for found in by_name
+            if _path_parts(found.get("file", ""))[-PATH_PARTS_TO_MATCH:] == tail
+        ]
+        if len(matches) == 1:
+            return {id_key: matches[0][id_key]}
     return None
 
 
+def _path_parts(path: str) -> list[str]:
+    return [part for part in re.split(r"[\\/]", path) if part]
+
+
 async def _library_search(
-    client: KodiClient, method: str, result_key: str, operator: str, value: str
+    client: KodiClient,
+    method: str,
+    result_key: str,
+    operator: str,
+    value: str,
+    *,
+    properties: list[str] | None = None,
 ) -> list[dict[str, Any]]:
+    params: dict[str, Any] = {
+        "filter": {"field": "filename", "operator": operator, "value": value},
+        "limits": {"start": 0, "end": 20},
+    }
+    if properties:
+        params["properties"] = properties
     try:
-        result = await client.call(
-            method,
-            {
-                "filter": {"field": "filename", "operator": operator, "value": value},
-                "limits": {"start": 0, "end": 2},
-            },
-        )
+        result = await client.call(method, params)
     except KodiError as err:
         _LOGGER.debug("Kodi library search %s failed: %s", method, err)
         return []

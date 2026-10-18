@@ -109,6 +109,8 @@ Home Assistant's media browser itself has no "play next" or "add to queue" optio
 
 Folders such as shows and seasons, and items that can't be queued (TV channels), behave as before.
 
+Good to know: media picked this way in the media selector of an automation or script stores a Better Kodi ID (`better_kodi://…`), which only Better Kodi's media player understands. Dashboard cards that browse media through Better Kodi's media player see the same choices.
+
 ### Share from your Android phone
 
 The Home Assistant Companion app for Android can share links to Home Assistant, which fires a `mobile_app.share` event:
@@ -135,7 +137,7 @@ Which field holds the link depends on the app you share from (`url` or `text`). 
 
 The media browser of Better Kodi's media player shows a **Queue** folder at the top, next to the Kodi library. The playing item is marked with ▶; select an item to jump to it.
 
-Entries get their titles even when another app (Cast Kodi, Yatse) queued them: Kodi only knows unplayed add-on items by their path ("play"), so Better Kodi looks up YouTube titles and Jellyfin titles itself.
+Entries get their titles even when another app (Cast Kodi, Yatse) queued them: Kodi only knows unplayed add-on items by their path ("play"), so Better Kodi looks up the titles of YouTube entries and of Jellyfin stream links itself. Entries that Kodi or an add-on already named keep their name.
 
 ### Jellyfin items from Home Assistant's media browser
 

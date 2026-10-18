@@ -202,6 +202,9 @@ class FakeKodi:
     def _VideoLibrary_GetEpisodes(self, **params: Any) -> dict[str, Any]:
         return self._library("episodes", **params)
 
+    def _VideoLibrary_GetMusicVideos(self, **params: Any) -> dict[str, Any]:
+        return self._library("musicvideos", **params)
+
     # Internals --------------------------------------------------------------------
 
     def _require_player(self, playerid: int) -> None:

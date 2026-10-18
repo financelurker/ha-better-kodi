@@ -253,3 +253,76 @@ async def test_title_lookup_timeout_is_retried(
     assert [item.title for item in await queue.items()] == ["a"]
     await queue.items()
     assert calls == 2
+
+
+async def test_titled_addon_entries_are_not_looked_up(kodi: FakeKodi) -> None:
+    """A YouTube playlist played by the add-on fills the queue with titled entries."""
+    looked_up: list[str] = []
+
+    async def lookup(file: str):
+        looked_up.append(file)
+        return ("Looked up", None)
+
+    queue = KodiQueue(kodi, lookup)  # type: ignore[arg-type]
+    kodi.playlist = [
+        {
+            "file": f"plugin://plugin.video.youtube/play/?video_id=v{n}",
+            "label": f"Video {n}",
+            "title": f"Video {n}",
+            "type": "unknown",
+        }
+        for n in range(10)
+    ]
+    assert [item.title for item in await queue.items()] == [f"Video {n}" for n in range(10)]
+    assert looked_up == []
+
+
+async def test_failed_lookup_is_retried_later(
+    kodi: FakeKodi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    answers = [None, ("Back online", None)]
+
+    async def lookup(file: str):
+        return answers.pop(0)
+
+    queue = KodiQueue(kodi, lookup)  # type: ignore[arg-type]
+    await kodi.call("Playlist.Add", {"playlistid": 1, "item": {"file": "plugin://x/play"}})
+    assert [item.title for item in await queue.items()] == ["play"]
+    assert [item.title for item in await queue.items()] == ["play"]  # not asked again yet
+    monkeypatch.setattr(queue_module, "LOOKUP_RETRY_AFTER", -1)
+    assert [item.title for item in await queue.items()] == ["Back online"]
+
+
+async def test_broken_lookup_does_not_break_the_queue(kodi: FakeKodi) -> None:
+    async def lookup(file: str):
+        raise ValueError("odd answer")
+
+    queue = KodiQueue(kodi, lookup)  # type: ignore[arg-type]
+    await kodi.call("Playlist.Add", {"playlistid": 1, "item": {"file": "plugin://x/play"}})
+    assert [item.title for item in await queue.items()] == ["play"]
+
+
+async def test_lookups_are_limited_and_not_doubled(kodi: FakeKodi) -> None:
+    running = 0
+    most = 0
+    calls: list[str] = []
+
+    async def lookup(file: str):
+        nonlocal running, most
+        calls.append(file)
+        running += 1
+        most = max(most, running)
+        await asyncio.sleep(0.01)
+        running -= 1
+        return (file.upper(), None)
+
+    queue = KodiQueue(kodi, lookup)  # type: ignore[arg-type]
+    await kodi.call(
+        "Playlist.Add",
+        {"playlistid": 1, "item": [{"file": f"plugin://x/{n}"} for n in range(40)]},
+    )
+    await asyncio.gather(queue.items(), queue.items())
+    assert most <= queue_module.MAX_PARALLEL_LOOKUPS
+    assert len(calls) == queue_module.MAX_LOOKUPS_PER_READ  # and nothing twice
+    await queue.items()
+    assert len(calls) == 40

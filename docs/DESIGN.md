@@ -82,20 +82,20 @@ Titles and thumbnails: Kodi labels an add-on item that hasn't been played yet wi
 - Links played through Better Kodi: YouTube titles from YouTube's oEmbed endpoint (no API key), Rumble titles from its embed API.
 - Entries added by other apps (Cast Kodi, Yatse, …) or before a restart: when the queue is read, YouTube add-on paths (`video_id`, `playlist_id`, `uri2addon`) and SendToKodi paths with a YouTube link are looked up via oEmbed.
 
-Results are kept in memory (also failed lookups, so nothing is asked twice); a timeout is retried on the next read. Kodi label formatting such as `[B]…[/B]` is removed.
+Only entries without a title are looked up: Kodi leaves `title` empty for unplayed paths, while entries an add-on filled in (for example the items of a YouTube playlist) keep their title. At most 25 entries are looked up per read, 4 at a time, and the same file is never looked up twice at once. Results are kept in memory (up to 2000). A lookup that found nothing, failed or answered oddly is tried again after 10 minutes; a timeout on the next read. Kodi label formatting such as `[B]…[/B]` is removed.
 
 ## Controls in the user interface
 
 Home Assistant's own interface (media browser, more-info dialog, media control card) never passes `enqueue`, for any player. Better Kodi therefore adds:
 
 - A **Link** text entity and four buttons (play now, next, add, replace) on the Kodi device. A button calls `media_player.play_media` on Better Kodi's player with the link and clears the field on success. The link lives in memory only; it is empty after a restart.
-- **Choices in the media browser**: every playable leaf that can be queued (Kodi library movies, episodes and music videos, media source items, links) is returned as expandable *and* playable, with the ID `better_kodi://choose/<type>/<id>`. The frontend opens expandable items on click and plays them with the play button, so a click shows four entries `better_kodi://enqueue/<mode>/<type>/<id>`, and the play button plays at once. Type and ID are URL-encoded. Title and thumbnail of the wrapped item are kept in memory (up to 1000); an unknown choices ID still works, with a generic title.
+- **Choices in the media browser** (an `enqueue` passed together with a choice ID is ignored; the choice wins): every playable leaf that can be queued (Kodi library movies, episodes and music videos, media source items, links) is returned as expandable *and* playable, with the ID `better_kodi://choose/<type>/<id>`. The frontend opens expandable items on click and plays them with the play button, so a click shows four entries `better_kodi://enqueue/<mode>/<type>/<id>`, and the play button plays at once. Type and ID are URL-encoded. Title and thumbnail of the wrapped item are kept in memory (up to 1000); an unknown choices ID still works, with a generic title.
 
 ## Jellyfin from Home Assistant's media browser
 
-Home Assistant's Jellyfin integration resolves items to `…/Videos/<id>/stream?static=true&api_key=…`. Kodi's JSON-RPC API cannot pass a title with `Playlist.Add`, and Kodi labels the URL "stream". Better Kodi reads the item from `GET <server>/Items?ids=<id>&fields=Path` with the API key from that URL and queues:
+Home Assistant's Jellyfin integration resolves items to `…/Videos/<id>/stream?static=true&api_key=…`. Kodi's JSON-RPC API cannot pass a title with `Playlist.Add`, and Kodi labels the URL "stream". Better Kodi reads the item from `GET <server>/Items?ids=<id>&fields=Path`, with the key from that URL (`ApiKey` or `api_key`) sent as `Authorization: MediaBrowser Token="…"` header to that same server only, and queues:
 
-1. the Kodi library item, if Kodi has it: Jellyfin for Kodi in add-on mode stores files as `plugin://plugin.video.jellyfin/<library>/?filename=…&id=<jellyfin id>&…`, found with a `filename contains "id=<id>"` filter; in direct-path mode the file name of Jellyfin's `Path` must match exactly one library file;
+1. the Kodi library item, if Kodi has it: Jellyfin for Kodi in add-on mode stores files as `plugin://plugin.video.jellyfin/<library>/?filename=…&id=<jellyfin id>&…`, found with a `filename contains "id=<id>"` filter; in direct-path mode Kodi's `filename` field holds the file name only, so library files with Jellyfin's file name are fetched and exactly one of them must also be in a folder of the same name (`S01E01.mkv` alone is not enough);
 2. otherwise, with `plugin.video.jellyfin` installed, `plugin://plugin.video.jellyfin/?mode=play&id=<id>`;
 3. otherwise the stream URL.
 

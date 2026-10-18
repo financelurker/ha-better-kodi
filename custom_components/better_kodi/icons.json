@@ -15,5 +15,26 @@
     "handover": {
       "service": "mdi:transfer"
     }
+  },
+  "entity": {
+    "text": {
+      "link": {
+        "default": "mdi:link-variant"
+      }
+    },
+    "button": {
+      "play_now": {
+        "default": "mdi:play"
+      },
+      "play_next": {
+        "default": "mdi:skip-next"
+      },
+      "add_to_queue": {
+        "default": "mdi:playlist-plus"
+      },
+      "replace_queue": {
+        "default": "mdi:playlist-music"
+      }
+    }
   }
 }
