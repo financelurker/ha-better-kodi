@@ -14,12 +14,13 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 
 import aiohttp
 
+from .jellyfin import ADDON_JELLYFIN, addon_path, async_get_item, parse_stream_url
+
 _LOGGER = logging.getLogger(__name__)
 
 HTTP_TIMEOUT = aiohttp.ClientTimeout(total=10)
 
 ADDON_YOUTUBE = "plugin.video.youtube"
-ADDON_JELLYFIN = "plugin.video.jellyfin"
 ADDON_JELLYCON = "plugin.video.jellycon"
 ADDON_SENDTOKODI = "plugin.video.sendtokodi"
 
@@ -287,12 +288,7 @@ async def resolve_jellyfin(url: str, context: ResolveContext) -> ResolvedMedia |
     if (item_id := parse_jellyfin_item_id(url)) is None:
         return None
     if ADDON_JELLYFIN in context.addons:
-        return ResolvedMedia(
-            item={
-                "file": f"plugin://{ADDON_JELLYFIN}/?" + urlencode({"mode": "play", "id": item_id})
-            },
-            resolver="jellyfin",
-        )
+        return ResolvedMedia(item={"file": addon_path(item_id)}, resolver="jellyfin")
     if ADDON_JELLYCON in context.addons:
         return ResolvedMedia(
             item={
@@ -391,6 +387,10 @@ async def async_lookup_title(
     session: aiohttp.ClientSession, file: str
 ) -> tuple[str | None, str | None] | None:
     """Return title and thumbnail for a queue entry, or None if unknown."""
+    if (stream := parse_stream_url(file)) is not None:
+        if (item := await async_get_item(session, stream)) is None:
+            return None
+        return item.title, item.thumbnail
     if (youtube := youtube_from_kodi_path(file)) is None:
         return None
     kind, youtube_id = youtube

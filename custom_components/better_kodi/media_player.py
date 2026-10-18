@@ -66,6 +66,13 @@ from .const import (
     QUEUE_ITEM_CONTENT_TYPE,
     QUEUE_ITEM_PREFIX,
 )
+from .jellyfin import (
+    ADDON_JELLYFIN,
+    addon_path,
+    async_find_in_kodi_library,
+    async_get_item,
+    parse_stream_url,
+)
 from .kodi_client import KodiError, KodiRpcError
 from .queue import EnqueueMode, HandoverSnapshot, QueueError, QueueStatus
 from .resolvers import (
@@ -399,7 +406,8 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
         if media_source.is_media_source_id(media_id):
             play_item = await media_source.async_resolve_media(self.hass, media_id, self.entity_id)
             url = async_process_play_media_url(self.hass, play_item.url)
-            await self._run(self._data.queue.enqueue({"file": url}, mode))
+            item = await self._async_media_source_item(url)
+            await self._run(self._data.queue.enqueue(item, mode))
             return
 
         if _is_playable_link(media_id):
@@ -432,6 +440,24 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
             media_content_type=media_type,
             media_content_id=media_id,
         )
+
+    async def _async_media_source_item(self, url: str) -> dict[str, Any]:
+        """Return the best Kodi item for a resolved media source URL."""
+        if (stream := parse_stream_url(url)) is None:
+            return {"file": url}
+        if (jellyfin_item := await async_get_item(self._data.web_session, stream)) is None:
+            return {"file": url}
+        try:
+            if library_item := await async_find_in_kodi_library(self._data.client, jellyfin_item):
+                return library_item  # Kodi knows title and artwork itself
+        except KodiError:
+            pass
+        if ADDON_JELLYFIN in await self._data.async_get_addons():
+            file = addon_path(jellyfin_item.item_id)
+        else:
+            file = url
+        self._data.queue.known.remember(file, jellyfin_item.title, jellyfin_item.thumbnail)
+        return {"file": file}
 
     async def async_clear_playlist(self) -> None:
         """Clear the video queue."""

@@ -28,6 +28,8 @@ class FakeKodi:
         self.start_delay = 0
         self.seek_refusals = 0
         self._pending_start: int | None = None
+        # Kodi's video library: "movies", "episodes", "musicvideos" -> items with "file"
+        self.library: dict[str, list[dict[str, Any]]] = {}
 
     # Helpers for tests ----------------------------------------------------------
 
@@ -177,6 +179,28 @@ class FakeKodi:
         if self.position >= 0:
             self.position = -1
         return "OK"
+
+    def _library(self, key: str, filter: dict[str, Any] | None = None, **_: Any) -> dict[str, Any]:
+        items = self.library.get(key, [])
+        if filter:
+            assert filter["field"] == "filename"
+            value = filter["value"]
+
+            def file_name(item: dict[str, Any]) -> str:
+                # Kodi's "filename" is the part after the last "/" of the file.
+                return item["file"].rsplit("/", 1)[-1]
+
+            if filter["operator"] == "contains":
+                items = [item for item in items if value in file_name(item)]
+            elif filter["operator"] == "is":
+                items = [item for item in items if file_name(item) == value]
+        return {key: [dict(item) for item in items], "limits": {"total": len(items)}}
+
+    def _VideoLibrary_GetMovies(self, **params: Any) -> dict[str, Any]:
+        return self._library("movies", **params)
+
+    def _VideoLibrary_GetEpisodes(self, **params: Any) -> dict[str, Any]:
+        return self._library("episodes", **params)
 
     # Internals --------------------------------------------------------------------
 
