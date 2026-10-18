@@ -26,7 +26,7 @@ When Better Kodi is set up, it reads host, ports and credentials from the config
 
 Reading another integration's config entry data couples us to its internal keys. Accepted: if Core changes them, pre-filling breaks until Better Kodi is updated; already stored entries keep working.
 
-#### Kodi switched off, wrong password, Kodi entity gone
+### Kodi switched off, wrong password, Kodi entity gone
 
 - Better Kodi starts even when Kodi doesn't answer, like the Kodi integration does. Otherwise `turn_on` (which runs the user's Kodi turn-on automation) would be unavailable exactly when it is needed. Add-ons and the queue are read once Kodi answers.
 - If Kodi rejects the credentials, setup fails with a re-authentication request.
@@ -88,13 +88,13 @@ Results are kept in memory (up to 2000). A lookup that found nothing, failed or 
 
 ## Waking Kodi before sending
 
-Before `play_media` (which also covers the buttons, media browser choices and queue jumps) and on the destination of a handover: if the Kodi entity's state is `off` and the option *Wake Kodi before sending* is on (default), Better Kodi calls `media_player.turn_on` on the Kodi entity. That fires the Kodi integration's turn-on trigger, which runs the user's turn-on automation (typically Wake on LAN). Better Kodi then waits until the Kodi entity's state is something other than `off`, `unavailable` or `unknown` (option *Wait at most*, default 120 s, 10–900 s), and then up to 30 s more until Kodi answers `JSONRPC.Ping`, because the Kodi integration may report Kodi before its web server answers. The add-on list is re-read afterwards. If Kodi does not wake in time, the call fails with an error naming the Kodi entity; nothing is sent.
+Before `play_media` (which also covers the buttons, media browser choices and queue jumps) and on the destination of a handover: if the Kodi entity's state is `off` and the option *Wake Kodi before sending* is on (default), Better Kodi calls `media_player.turn_on` on the Kodi entity. That fires the Kodi integration's turn-on trigger, which runs the user's turn-on automation (typically Wake on LAN). Better Kodi then waits until the Kodi entity's state is something other than `off`, `unavailable` or `unknown` (option *Wait at most*, default 120 s, 10–900 s), and then up to 30 s more until Kodi answers `JSONRPC.Ping`, because the Kodi integration may report Kodi before its web server answers. The add-on list is re-read afterwards. If Kodi does not wake in time, the call fails with an error naming the Kodi entity; nothing is sent. Changing the options reloads the entry.
 
-- The Kodi integration's `turn_on` only fires the `kodi.turn_on` event, which the user's "Kodi turned on" automation listens for. If nothing listens, Better Kodi fails at once with an error asking to create that automation, instead of waiting for nothing.
-- One wake per Kodi: calls that arrive while Kodi is being woken wait for that same wake (a shared task, shielded so one caller giving up doesn't cancel it for the others). The automation runs once; a power toggle would otherwise switch the device off again.
+- The Kodi integration's `turn_on` only fires the `kodi.turn_on` event, which the user's "Kodi turned on" automation listens for. If nothing listens at all, Better Kodi fails at once with an error asking to create that automation, instead of waiting for nothing. Event listeners can't be told apart by Kodi, so an automation for *another* Kodi also counts; then the timeout applies. Right after Home Assistant starts or while automations reload, triggers are briefly detached, so a send in that moment may report a missing automation.
+- One wake per Kodi: calls that arrive while Kodi is being woken wait for that same wake (a shared task, shielded so one caller giving up doesn't cancel it for the others). The automation runs once; a power toggle would otherwise switch the device off again. The task is kept per Kodi entity outside the config entry, so a reload (for example after changing options) doesn't start a second wake; it is a background task, so it is cancelled when Home Assistant stops, and its waiters then get a clear error.
 - Checks that need no Kodi (unknown choice, items that can't be queued) run before waking, so a bad request doesn't switch Kodi on.
 - Handover wakes the destination before taking the snapshot, so position and time are current when the destination starts.
-- The link buttons refuse to send while Better Kodi's player is unavailable, because Home Assistant silently skips service calls to unavailable entities (and the link would be cleared as if sent). Changing the options reloads the entry.
+- The link buttons refuse to send while Better Kodi's player is unavailable, because Home Assistant silently skips service calls to unavailable entities (and the link would be cleared as if sent).
 
 ## Controls in the user interface
 

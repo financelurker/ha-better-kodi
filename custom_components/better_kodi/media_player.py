@@ -105,6 +105,7 @@ CHOICES_PREFIX = "better_kodi://choose/"
 ENQUEUE_PREFIX = "better_kodi://enqueue/"
 CHOICE_ORDER = ("play", "next", "add", "replace")
 READY_POLL_INTERVAL = 1.0
+WAKE_TASKS = f"{DOMAIN}_wake_tasks"
 KODI_EVENT_TURN_ON = "kodi.turn_on"  # fired by the Kodi integration's turn_on
 LINK_IN_TEXT = re.compile(r"https?://\S+")
 TRAILING_PUNCTUATION = ".,;:!?)]}>'\"»“”"
@@ -502,17 +503,28 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
         Calls that arrive during a wake wait for that same wake, so the
         automation runs once (a power toggle would otherwise switch off again).
         """
-        running = self._data.wake_task
+        # Kept per Kodi entity outside the config entry, so that a reload (for
+        # example after changing options) doesn't start a second wake. As a
+        # background task it is cancelled when Home Assistant stops.
+        wakes: dict[str, asyncio.Task[None]] = self.hass.data.setdefault(WAKE_TASKS, {})
+        running = wakes.get(self._source_entity_id)
         if running is None or running.done():
             options = self._entry.options
             source = self.hass.states.get(self._source_entity_id)
             if not options.get(CONF_WAKE, True) or source is None or source.state != STATE_OFF:
                 return
-            running = self._data.wake_task = self.hass.async_create_task(
+            running = wakes[self._source_entity_id] = self.hass.async_create_background_task(
                 self._async_wake(), f"{DOMAIN} wake {self._source_entity_id}"
             )
-        # shield: one caller giving up must not cancel the wake for the others
-        await asyncio.shield(running)
+        try:
+            # shield: one caller giving up must not cancel the wake for the others
+            await asyncio.shield(running)
+        except asyncio.CancelledError:
+            if not running.cancelled():
+                raise  # this caller was cancelled
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="wake_cancelled"
+            ) from None
 
     async def _async_wake(self) -> None:
         if not self.hass.bus.async_listeners().get(KODI_EVENT_TURN_ON):
@@ -639,8 +651,7 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
         if (await self._run(self._data.queue.status())).player_id is None:
             raise ServiceValidationError(
                 translation_domain=DOMAIN,
-                translation_key="queue_error",
-                translation_placeholders={"error": "Nothing is playing on this Kodi"},
+                translation_key="nothing_playing",
             )
         # Wake the destination first, so the snapshot is taken when it can start.
         if isinstance(

@@ -142,6 +142,12 @@
     },
     "no_turn_on_automation": {
       "message": "Kodi cannot be woken: there is no automation for \"Kodi turned on\" of {entity_id}. Create one under the Kodi device's automations (for example with Wake on LAN), or turn waking off in Better Kodi's options."
+    },
+    "nothing_playing": {
+      "message": "Nothing is playing on this Kodi."
+    },
+    "wake_cancelled": {
+      "message": "Waking Kodi was interrupted (Better Kodi was reloaded or Home Assistant is stopping). Please try again."
     }
   },
   "services": {
