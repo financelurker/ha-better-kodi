@@ -17,6 +17,9 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.event.release.tag_name || inputs.tag }}
+
 jobs:
   zip:
     name: Build and attach ZIP
@@ -25,12 +28,12 @@ jobs:
       TAG: ${{ github.event.release.tag_name || inputs.tag }}
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v5
-        with:
-          ref: ${{ env.TAG }}
-
       - name: Check that the release exists
         run: gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null
+
+      - uses: actions/checkout@v5
+        with:
+          ref: refs/tags/${{ env.TAG }}
 
       - name: Read version from tag
         id: version
@@ -42,6 +45,27 @@ jobs:
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - name: Check version like Home Assistant does
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # Same library, version and rules as Home Assistant's loader, which
+          # refuses to load an integration whose manifest version fails this.
+          pip install --quiet awesomeversion==25.8.0
+          python3 - <<'PY' || { echo "::error title=Not a version::Home Assistant would not accept '$VERSION' (from tag '$TAG') as a version."; exit 1; }
+          import os
+          from awesomeversion import AwesomeVersion, AwesomeVersionStrategy as S
+          AwesomeVersion(
+              os.environ["VERSION"],
+              ensure_strategy=[S.CALVER, S.SEMVER, S.SIMPLEVER, S.BUILDVER, S.PEP440],
+          )
+          PY
 
       - name: Find integration
         id: domain
