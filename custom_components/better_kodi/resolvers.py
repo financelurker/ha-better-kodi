@@ -14,12 +14,13 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 
 import aiohttp
 
+from .jellyfin import ADDON_JELLYFIN, addon_path, async_get_item, parse_stream_url
+
 _LOGGER = logging.getLogger(__name__)
 
 HTTP_TIMEOUT = aiohttp.ClientTimeout(total=10)
 
 ADDON_YOUTUBE = "plugin.video.youtube"
-ADDON_JELLYFIN = "plugin.video.jellyfin"
 ADDON_JELLYCON = "plugin.video.jellycon"
 ADDON_SENDTOKODI = "plugin.video.sendtokodi"
 
@@ -154,17 +155,21 @@ async def resolve_youtube(url: str, context: ResolveContext) -> ResolvedMedia | 
     )
 
 
+def youtube_page_url(kind: str, youtube_id: str) -> str:
+    """Return the YouTube page URL of a video or playlist."""
+    if kind == "playlist":
+        return f"https://www.youtube.com/playlist?list={youtube_id}"
+    return f"https://www.youtube.com/watch?v={youtube_id}"
+
+
 async def _youtube_oembed(
-    session: aiohttp.ClientSession, video_id: str
+    session: aiohttp.ClientSession, video_id: str, kind: str = "video"
 ) -> tuple[str | None, str | None]:
-    """Fetch title and thumbnail of a YouTube video, without an API key."""
+    """Fetch title and thumbnail of a YouTube video or playlist, without an API key."""
     try:
         async with session.get(
             YOUTUBE_OEMBED,
-            params={
-                "url": f"https://www.youtube.com/watch?v={video_id}",
-                "format": "json",
-            },
+            params={"url": youtube_page_url(kind, video_id), "format": "json"},
             timeout=HTTP_TIMEOUT,
         ) as response:
             if response.status != 200:
@@ -283,12 +288,7 @@ async def resolve_jellyfin(url: str, context: ResolveContext) -> ResolvedMedia |
     if (item_id := parse_jellyfin_item_id(url)) is None:
         return None
     if ADDON_JELLYFIN in context.addons:
-        return ResolvedMedia(
-            item={
-                "file": f"plugin://{ADDON_JELLYFIN}/?" + urlencode({"mode": "play", "id": item_id})
-            },
-            resolver="jellyfin",
-        )
+        return ResolvedMedia(item={"file": addon_path(item_id)}, resolver="jellyfin")
     if ADDON_JELLYCON in context.addons:
         return ResolvedMedia(
             item={
@@ -344,3 +344,57 @@ RESOLVERS: tuple[Resolver, ...] = (
     resolve_direct,
     resolve_sendtokodi,
 )
+
+
+# --- Titles for queue entries --------------------------------------------------
+#
+# Kodi labels an add-on path that has not been played yet with a part of the
+# path, for example "play" for plugin://plugin.video.youtube/play/?video_id=…
+# Entries added by other apps (Cast Kodi, Yatse, …) or before a restart are
+# therefore named here from their path.
+
+KODI_MARKUP = re.compile(r"\[/?(?:B|I|LIGHT|UPPERCASE|LOWERCASE|CAPITALIZE|COLOR[^\]]*)\]")
+
+
+def strip_kodi_markup(text: str) -> str:
+    """Remove Kodi label formatting such as [B]…[/B] or [COLOR red]…[/COLOR]."""
+    return " ".join(KODI_MARKUP.sub("", text.replace("[CR]", " ")).split())
+
+
+def youtube_from_kodi_path(file: str) -> tuple[str, str] | None:
+    """Return ("video" | "playlist", id) for a YouTube item in Kodi's queue."""
+    parts = urlsplit(file)
+    scheme = parts.scheme.lower()
+    host = (parts.hostname or "").lower()
+    query = parse_qs(parts.query)
+    if scheme == "plugin" and host == ADDON_YOUTUBE:
+        if video_id := query.get("video_id", query.get("videoid", [""]))[0]:
+            return ("video", video_id) if YOUTUBE_ID.match(video_id) else None
+        if playlist_id := query.get("playlist_id", query.get("playlist", [""]))[0]:
+            return ("playlist", playlist_id)
+        if uri := query.get("uri", [""])[0]:
+            return parse_youtube(uri)
+        return None
+    if scheme == "plugin" and host == ADDON_SENDTOKODI:
+        # SendToKodi gets the page URL unencoded after "?".
+        return parse_youtube(file.split("?", 1)[1]) if "?" in file else None
+    if scheme in ("http", "https"):
+        return parse_youtube(file)
+    return None
+
+
+async def async_lookup_title(
+    session: aiohttp.ClientSession, file: str
+) -> tuple[str | None, str | None] | None:
+    """Return title and thumbnail for a queue entry, or None if unknown."""
+    if (stream := parse_stream_url(file)) is not None:
+        if (item := await async_get_item(session, stream)) is None:
+            return None
+        return item.title, item.thumbnail
+    if (youtube := youtube_from_kodi_path(file)) is None:
+        return None
+    kind, youtube_id = youtube
+    title, thumbnail = await _youtube_oembed(session, youtube_id, kind)
+    if title is None and thumbnail is None:
+        return None
+    return title, thumbnail

@@ -81,30 +81,35 @@ data:
 | `add` | Plays at the end of the queue | Starts a new queue |
 | `replace` | Clears the queue and plays | Starts a new queue |
 
-### Dashboard: paste a link, choose what happens
+### Paste a link: link field and buttons
 
-Create a text helper `input_text.kodi_link` (max length 255) and a script that reads it:
+Better Kodi adds a **Link** field and four buttons to the Kodi device: **Play link now**, **Play link next**, **Add link to queue** and **Replace queue with link**. Paste a link, press a button, done; the field is cleared afterwards (and kept if the link can't be played).
+
+Put them on a dashboard, for example:
 
 ```yaml
-script:
-  kodi_link:
-    alias: Play link on Kodi
-    fields:
-      enqueue:
-        selector:
-          select:
-            options: [play, next, add, replace]
-    sequence:
-      - action: media_player.play_media
-        target:
-          entity_id: media_player.living_room_kodi_2
-        data:
-          media_content_type: url
-          media_content_id: "{{ states('input_text.kodi_link') }}"
-          enqueue: "{{ enqueue | default('play') }}"
+type: entities
+entities:
+  - entity: text.living_room_kodi_link
+  - type: buttons
+    entities:
+      - button.living_room_kodi_play_link_now
+      - button.living_room_kodi_play_link_next
+      - button.living_room_kodi_add_link_to_queue
 ```
 
-Buttons on the dashboard then call `script.kodi_link` with `enqueue: next` and so on.
+The field holds up to 255 characters, the longest value Home Assistant can store. For longer links use `media_player.play_media` directly.
+
+### Play next or add to the queue from the media browser
+
+Home Assistant's media browser itself has no "play next" or "add to queue" option. Better Kodi adds one:
+
+- **Click** a movie, episode, music video or media source item (for example from Jellyfin): a small folder opens with **▶ Play now**, **⏭ Play next**, **➕ Add to queue** and **⟲ Replace queue**.
+- The **play button** on the item still plays it right away.
+
+Folders such as shows and seasons, and items that can't be queued (TV channels), behave as before.
+
+Good to know: media picked this way in the media selector of an automation or script stores a Better Kodi ID (`better_kodi://…`), which only Better Kodi's media player understands. Dashboard cards that browse media through Better Kodi's media player see the same choices.
 
 ### Share from your Android phone
 
@@ -130,7 +135,19 @@ Which field holds the link depends on the app you share from (`url` or `text`). 
 
 ### The queue
 
-The media browser of Better Kodi's media player shows a **Queue** folder at the top, next to the Kodi library. The playing item is marked with ▶; select an item to jump to it. Library items (movies, episodes, music videos) can be queued from the media browser too.
+The media browser of Better Kodi's media player shows a **Queue** folder at the top, next to the Kodi library. The playing item is marked with ▶; select an item to jump to it.
+
+Entries get their titles even when another app (Cast Kodi, Yatse) queued them: Kodi only knows unplayed add-on items by their path ("play"), so Better Kodi looks up the titles of YouTube entries and of Jellyfin stream links itself. Entries that Kodi or an add-on already named keep their name.
+
+### Jellyfin items from Home Assistant's media browser
+
+Home Assistant's Jellyfin integration hands players a plain stream link, which Kodi (and so Cast Kodi) names "stream". Better Kodi reads the item from Jellyfin and queues, in this order:
+
+1. **The item from Kodi's own library**, if the Jellyfin for Kodi add-on synced it. Then Kodi knows title and artwork itself, and every app shows them.
+2. **Jellyfin for Kodi's play path**, if the add-on is installed but the item isn't synced. Playback is then reported to Jellyfin (watched state, resume).
+3. **The stream link**, as before.
+
+Better Kodi's own queue shows the title in every case. In the 2nd and 3rd case Kodi itself only learns the title once the item plays, so other apps show it as "stream" or similar until then.
 
 The entity also has the attributes `queue_position` and `queue_length`.
 

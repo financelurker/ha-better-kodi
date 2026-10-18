@@ -27,11 +27,12 @@ from .assist import transfer_exposure
 from .const import CONF_HIDE_SOURCE, CONF_SOURCE_ENTITY_UUID, CONF_WS_PORT, DOMAIN
 from .kodi_client import KodiAuthError, KodiClient, KodiError
 from .queue import KodiQueue
+from .resolvers import async_lookup_title
 from .services import async_setup_services
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = [Platform.MEDIA_PLAYER]
+PLATFORMS = [Platform.MEDIA_PLAYER, Platform.TEXT, Platform.BUTTON]
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 ADDON_CACHE_SECONDS = 600
 NOTIFICATIONS = ("Playlist.", "Player.OnPlay", "Player.OnStop", "Player.OnAVStart")
@@ -51,6 +52,14 @@ class BetterKodiData:
     addons: frozenset[str] = frozenset()
     addons_loaded_at: float | None = None
     queue_listeners: list[QueueListener] = field(default_factory=list)
+    link: str = ""
+    link_listeners: list[QueueListener] = field(default_factory=list)
+
+    def set_link(self, link: str) -> None:
+        """Store the link of the link field and tell its entity."""
+        self.link = link
+        for listener in list(self.link_listeners):
+            listener()
 
     async def async_get_addons(self, *, force: bool = False) -> frozenset[str]:
         """Return the IDs of enabled video add-ons, refreshed every few minutes."""
@@ -122,11 +131,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: BetterKodiConfigEntry) -
         # starts, so that turn_on works; the rest follows once Kodi answers.
         _LOGGER.debug("Kodi at %s is not reachable yet: %s", entry.data[CONF_HOST], err)
 
+    web_session = async_get_clientsession(hass)
+
+    async def look_up_title(file: str) -> tuple[str | None, str | None] | None:
+        return await async_lookup_title(web_session, file)
+
     data = BetterKodiData(
         client=client,
-        queue=KodiQueue(client),
+        queue=KodiQueue(client, look_up_title),
         source_entity_id=source_entity_id,
-        web_session=async_get_clientsession(hass),
+        web_session=web_session,
     )
     await data.async_get_addons(force=True)
     entry.runtime_data = data

@@ -76,6 +76,25 @@
           }
         }
       }
+    },
+    "text": {
+      "link": {
+        "name": "Link"
+      }
+    },
+    "button": {
+      "play_now": {
+        "name": "Play link now"
+      },
+      "play_next": {
+        "name": "Play link next"
+      },
+      "add_to_queue": {
+        "name": "Add link to queue"
+      },
+      "replace_queue": {
+        "name": "Replace queue with link"
+      }
     }
   },
   "exceptions": {
@@ -111,6 +130,12 @@
     },
     "source_missing": {
       "message": "The Kodi media player that Better Kodi extends no longer exists. Remove this Better Kodi entry, or set up the Kodi integration again."
+    },
+    "no_link": {
+      "message": "Paste a link into the Link field first."
+    },
+    "no_player": {
+      "message": "Better Kodi's media player is not available."
     }
   },
   "services": {
@@ -178,7 +203,11 @@
   "selector": {
     "browse": {
       "options": {
-        "queue": "Queue"
+        "queue": "Queue",
+        "play": "▶ Play now",
+        "next": "⏭ Play next",
+        "add": "➕ Add to queue",
+        "replace": "⟲ Replace queue"
       }
     }
   }
