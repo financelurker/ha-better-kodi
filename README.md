@@ -57,10 +57,10 @@ What happens:
 If the Kodi media player is **off** when you send something (a link, a media browser item, a button, a handover to that Kodi), Better Kodi:
 
 1. switches it on, which runs your Kodi **turn-on** automation (for example Wake on LAN; set it up under the Kodi device's automations, trigger "Kodi turned on");
-2. waits until the Kodi media player is no longer off, and until Kodi answers;
+2. waits until the Kodi media player is no longer off (and up to 30 seconds more until Kodi answers);
 3. then sends.
 
-The action or button keeps running meanwhile. If Kodi isn't awake within the time limit, you get an error and the link stays in the Link field. Turn this off or change the limit (default 120 seconds) under **Settings → Devices & services → Better Kodi → Configure**.
+Several links sent while Kodi wakes share one wake-up, so your automation runs only once. Without a "Kodi turned on" automation you get an error right away. The action or button keeps running meanwhile. If Kodi isn't awake within the time limit, you get an error and the link stays in the Link field. Turn this off or change the limit (default 120 seconds) under **Settings → Devices & services → Better Kodi → Configure**.
 
 ### Good to know
 

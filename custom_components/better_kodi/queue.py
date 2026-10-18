@@ -471,7 +471,10 @@ def _kodi_image(image: str | None) -> str | None:
         inner = unquote(image.removeprefix("image://").split("/", 1)[0])
         if "://" not in inner and "/" not in inner and "\\" not in inner:
             return None  # a skin placeholder, not a file
-    return image
+        return image
+    if image.startswith(("http://", "https://")):
+        return image
+    return None  # Kodi always wraps images; anything else isn't usable
 
 
 def _needs_title(raw: dict[str, Any]) -> bool:

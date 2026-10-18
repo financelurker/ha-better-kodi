@@ -1,5 +1,7 @@
 """Tests for waking Kodi before sending something to it."""
 
+import asyncio
+
 import pytest
 
 from custom_components.better_kodi.const import CONF_WAKE, CONF_WAKE_TIMEOUT, DOMAIN
@@ -12,7 +14,7 @@ from homeassistant.components.media_player import (
 from homeassistant.components.text import DOMAIN as TEXT_DOMAIN, SERVICE_SET_VALUE
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_ENTITY_ID
-from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
@@ -23,29 +25,48 @@ from .fake_kodi import FakeKodi
 FILE = "https://cdn.example/a.mp4"
 
 
+def kodi_integration_turn_on(hass: HomeAssistant, events: list[str]) -> None:
+    """Like the Kodi integration: turn_on only fires the kodi.turn_on event."""
+
+    async def turn_on(call: ServiceCall) -> None:
+        events.append("turn_on")
+        hass.bus.async_fire("kodi.turn_on", {ATTR_ENTITY_ID: call.data[ATTR_ENTITY_ID]})
+
+    hass.services.async_register(MP_DOMAIN, "turn_on", turn_on)
+
+
+def wake_on_lan_automation(
+    hass: HomeAssistant, source: KodiSource, kodi: FakeKodi, events: list[str]
+):
+    """The user's "Kodi turned on" automation: Kodi wakes a moment later."""
+
+    @callback
+    def wake() -> None:
+        events.append("awake")
+        kodi.offline = False
+        hass.states.async_set(source.entity_id, "idle", {"supported_features": 384})
+
+    @callback
+    def on_event(event) -> None:
+        if event.data[ATTR_ENTITY_ID] == source.entity_id:
+            events.append("automation")
+            hass.loop.call_later(0.05, wake)
+
+    return hass.bus.async_listen("kodi.turn_on", on_event)
+
+
 @pytest.fixture
 async def asleep(
     hass: HomeAssistant, kodi_source: KodiSource, fakes: dict[str, FakeKodi]
 ) -> tuple[ConfigEntry, str, FakeKodi, list[str]]:
-    """Kodi is suspended; turning it on (the user's WoL automation) wakes it later."""
+    """Kodi is suspended; its turn-on automation wakes it."""
     kodi = fakes[kodi_source.host]
     entry = await setup_better_kodi(hass, kodi_source)
     kodi.offline = True
     hass.states.async_set(kodi_source.entity_id, "off", {"supported_features": 384})
     events: list[str] = []
-
-    async def turn_on(call: ServiceCall) -> None:
-        events.append("turn_on")
-        assert call.data[ATTR_ENTITY_ID] == kodi_source.entity_id
-
-        def wake() -> None:
-            events.append("awake")
-            kodi.offline = False
-            hass.states.async_set(kodi_source.entity_id, "idle", {"supported_features": 384})
-
-        hass.loop.call_later(0.05, wake)
-
-    hass.services.async_register(MP_DOMAIN, "turn_on", turn_on)
+    kodi_integration_turn_on(hass, events)
+    wake_on_lan_automation(hass, kodi_source, kodi, events)
     return entry, own_entity_id(hass, entry), kodi, events
 
 
@@ -66,8 +87,44 @@ async def play(hass: HomeAssistant, player: str, enqueue: str = "add") -> None:
 async def test_wakes_kodi_then_sends(hass: HomeAssistant, asleep) -> None:
     _, player, kodi, events = asleep
     await play(hass, player)
-    assert events == ["turn_on", "awake"]
+    assert events == ["turn_on", "automation", "awake"]
     assert kodi.files() == [FILE]
+
+
+async def test_sends_during_one_wake_share_it(hass: HomeAssistant, asleep) -> None:
+    """Two buttons pressed while Kodi wakes: the automation runs once, both arrive in order."""
+    _, player, kodi, events = asleep
+    first = hass.async_create_task(play(hass, player, "add"))
+    await asyncio.sleep(0)
+    second = hass.async_create_task(
+        hass.services.async_call(
+            MP_DOMAIN,
+            "play_media",
+            {
+                ATTR_ENTITY_ID: player,
+                ATTR_MEDIA_CONTENT_ID: "https://cdn.example/b.mp4",
+                ATTR_MEDIA_CONTENT_TYPE: "url",
+                "enqueue": "add",
+            },
+            blocking=True,
+        )
+    )
+    await asyncio.gather(first, second)
+    assert events.count("turn_on") == 1
+    assert sorted(kodi.files()) == sorted([FILE, "https://cdn.example/b.mp4"])
+
+
+async def test_no_turn_on_automation(
+    hass: HomeAssistant, kodi_source: KodiSource, fakes: dict[str, FakeKodi]
+) -> None:
+    """Without an automation nothing can wake Kodi: say so at once instead of waiting."""
+    entry = await setup_better_kodi(hass, kodi_source)
+    fakes[kodi_source.host].offline = True
+    hass.states.async_set(kodi_source.entity_id, "off")
+    kodi_integration_turn_on(hass, [])
+    with pytest.raises(HomeAssistantError) as err:
+        await play(hass, own_entity_id(hass, entry))
+    assert err.value.translation_key == "no_turn_on_automation"
 
 
 async def test_no_wake_when_kodi_is_on(
@@ -81,20 +138,25 @@ async def test_no_wake_when_kodi_is_on(
     assert kodi.files() == [FILE]
 
 
-async def test_wake_times_out(hass: HomeAssistant, asleep, kodi_source: KodiSource) -> None:
-    entry, player, kodi, events = asleep
-
-    async def broken_turn_on(call: ServiceCall) -> None:
-        events.append("turn_on")  # no WoL automation: nothing happens
-
-    hass.services.async_register(MP_DOMAIN, "turn_on", broken_turn_on)
+async def test_wake_times_out(
+    hass: HomeAssistant, kodi_source: KodiSource, fakes: dict[str, FakeKodi]
+) -> None:
+    """The automation runs, but Kodi never wakes (for example WoL is off in the BIOS)."""
+    entry = await setup_better_kodi(hass, kodi_source)
+    kodi = fakes[kodi_source.host]
+    kodi.offline = True
+    hass.states.async_set(kodi_source.entity_id, "off")
+    events: list[str] = []
+    kodi_integration_turn_on(hass, events)
+    hass.bus.async_listen("kodi.turn_on", callback(lambda event: events.append("automation")))
     hass.config_entries.async_update_entry(
         entry, options={CONF_WAKE: True, CONF_WAKE_TIMEOUT: 0.05}
     )
     with pytest.raises(HomeAssistantError) as err:
-        await play(hass, player)
+        await play(hass, own_entity_id(hass, entry))
     assert err.value.translation_key == "wake_timeout"
     assert err.value.translation_placeholders["entity_id"] == kodi_source.entity_id
+    assert events == ["turn_on", "automation"]
     assert kodi.files() == []
 
 
@@ -121,7 +183,7 @@ async def test_button_wakes_kodi_and_keeps_link_on_failure(hass: HomeAssistant, 
         BUTTON_DOMAIN, SERVICE_PRESS, {ATTR_ENTITY_ID: button}, blocking=True
     )
     assert kodi.files() == [FILE]
-    assert events == ["turn_on", "awake"]
+    assert events == ["turn_on", "automation", "awake"]
 
 
 async def test_options_flow(hass: HomeAssistant, kodi_source: KodiSource) -> None:
@@ -148,14 +210,9 @@ async def test_handover_wakes_the_destination(
     bedroom_kodi = fakes[bedroom_source.host]
     bedroom_kodi.offline = True
     hass.states.async_set(bedroom_source.entity_id, "off")
-    woken: list[str] = []
-
-    async def turn_on(call: ServiceCall) -> None:
-        woken.append(call.data[ATTR_ENTITY_ID])
-        bedroom_kodi.offline = False
-        hass.states.async_set(bedroom_source.entity_id, "idle")
-
-    hass.services.async_register(MP_DOMAIN, "turn_on", turn_on)
+    events: list[str] = []
+    kodi_integration_turn_on(hass, events)
+    wake_on_lan_automation(hass, bedroom_source, bedroom_kodi, events)
     hass.services.async_register(MP_DOMAIN, "media_stop", lambda call: None)
     await hass.services.async_call(
         DOMAIN,
@@ -163,5 +220,5 @@ async def test_handover_wakes_the_destination(
         {ATTR_ENTITY_ID: living_player, "destination": bedroom_player},
         blocking=True,
     )
-    assert woken == [bedroom_source.entity_id]
+    assert events == ["turn_on", "automation", "awake"]
     assert bedroom_kodi.files() == [FILE]

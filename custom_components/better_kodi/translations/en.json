@@ -135,10 +135,13 @@
       "message": "Paste a link into the Link field first."
     },
     "no_player": {
-      "message": "Better Kodi's media player is not available."
+      "message": "Better Kodi's media player is not available, so nothing was sent. Is the Kodi media player available?"
     },
     "wake_timeout": {
       "message": "Kodi did not wake up within {seconds} seconds ({entity_id} is still off). Check your Kodi turn-on automation (for example Wake on LAN) under the Kodi device's automations."
+    },
+    "no_turn_on_automation": {
+      "message": "Kodi cannot be woken: there is no automation for \"Kodi turned on\" of {entity_id}. Create one under the Kodi device's automations (for example with Wake on LAN), or turn waking off in Better Kodi's options."
     }
   },
   "services": {

@@ -105,6 +105,7 @@ CHOICES_PREFIX = "better_kodi://choose/"
 ENQUEUE_PREFIX = "better_kodi://enqueue/"
 CHOICE_ORDER = ("play", "next", "add", "replace")
 READY_POLL_INTERVAL = 1.0
+KODI_EVENT_TURN_ON = "kodi.turn_on"  # fired by the Kodi integration's turn_on
 LINK_IN_TEXT = re.compile(r"https?://\S+")
 TRAILING_PUNCTUATION = ".,;:!?)]}>'\"»“”"
 PLAYABLE_SCHEMES = frozenset({"http", "https", *KODI_PATH_SCHEMES})
@@ -410,8 +411,6 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
     ) -> None:
         """Play or queue media, resolving page URLs (see docs/DESIGN.md)."""
         mode = EnqueueMode(enqueue) if enqueue else EnqueueMode.PLAY
-        await self._async_wake_kodi()
-
         media_id = extract_link(media_id)
         if media_id.startswith(ENQUEUE_PREFIX):
             # The choice in the ID wins over an "enqueue" passed with it.
@@ -427,6 +426,22 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
             media_type, media_id = _decode(encoded)
         elif media_id.startswith(CHOICES_PREFIX):
             media_type, media_id = _decode(media_id.removeprefix(CHOICES_PREFIX))
+
+        queueable = (
+            media_id.startswith(QUEUE_ITEM_PREFIX)
+            or media_source.is_media_source_id(media_id)
+            or _is_playable_link(media_id)
+            or (str(media_type).lower() in LIBRARY_ID_KEYS and media_id.isdigit())
+        )
+        if not queueable and mode in (EnqueueMode.NEXT, EnqueueMode.ADD):
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="enqueue_not_supported",
+                translation_placeholders={"media_type": str(media_type)},
+            )
+        # Checks that need no Kodi are done; now Kodi has to be awake.
+        await self._async_wake_kodi()
+
         if media_id.startswith(QUEUE_ITEM_PREFIX):
             position = _queue_position(media_id)
             await self._run(self._data.queue.play_position(position))
@@ -458,12 +473,6 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
             await self._run(self._data.queue.enqueue({key: int(media_id)}, mode))
             return
 
-        if mode in (EnqueueMode.NEXT, EnqueueMode.ADD):
-            raise ServiceValidationError(
-                translation_domain=DOMAIN,
-                translation_key="enqueue_not_supported",
-                translation_placeholders={"media_type": str(media_type)},
-            )
         await self._forward(
             "play_media",
             media_content_type=media_type,
@@ -490,12 +499,31 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
 
         "Turn on" runs the user's Kodi turn-on automation (for example Wake on
         LAN). Kodi counts as awake once the Kodi entity is no longer "off".
+        Calls that arrive during a wake wait for that same wake, so the
+        automation runs once (a power toggle would otherwise switch off again).
         """
-        options = self._entry.options
-        source = self.hass.states.get(self._source_entity_id)
-        if not options.get(CONF_WAKE, True) or source is None or source.state != STATE_OFF:
-            return
-        timeout = options.get(CONF_WAKE_TIMEOUT, DEFAULT_WAKE_TIMEOUT)
+        running = self._data.wake_task
+        if running is None or running.done():
+            options = self._entry.options
+            source = self.hass.states.get(self._source_entity_id)
+            if not options.get(CONF_WAKE, True) or source is None or source.state != STATE_OFF:
+                return
+            running = self._data.wake_task = self.hass.async_create_task(
+                self._async_wake(), f"{DOMAIN} wake {self._source_entity_id}"
+            )
+        # shield: one caller giving up must not cancel the wake for the others
+        await asyncio.shield(running)
+
+    async def _async_wake(self) -> None:
+        if not self.hass.bus.async_listeners().get(KODI_EVENT_TURN_ON):
+            # The Kodi integration's "turn on" only fires this event; without an
+            # automation listening, nothing would ever wake Kodi.
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="no_turn_on_automation",
+                translation_placeholders={"entity_id": self._source_entity_id},
+            )
+        timeout = self._entry.options.get(CONF_WAKE_TIMEOUT, DEFAULT_WAKE_TIMEOUT)
         awake = asyncio.Event()
 
         @callback
@@ -608,12 +636,19 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
         """Continue the current playback on another Better Kodi entity."""
         target = destination
         target_data = self._target_data(target)
-        snapshot: HandoverSnapshot = await self._run(self._data.queue.snapshot())
+        if (await self._run(self._data.queue.status())).player_id is None:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="queue_error",
+                translation_placeholders={"error": "Nothing is playing on this Kodi"},
+            )
+        # Wake the destination first, so the snapshot is taken when it can start.
         if isinstance(
             target_entity := self.hass.data[DATA_COMPONENT].get_entity(target),
             BetterKodiMediaPlayer,
         ):
             await target_entity._async_wake_kodi()
+        snapshot: HandoverSnapshot = await self._run(self._data.queue.snapshot())
         try:
             resumed = await target_data.queue.restore(snapshot, resume=resume)
         except QueueError as err:

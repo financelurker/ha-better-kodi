@@ -135,10 +135,13 @@
       "message": "Füge zuerst einen Link in das Feld „Link“ ein."
     },
     "no_player": {
-      "message": "Der Media-Player von Better Kodi ist nicht verfügbar."
+      "message": "Der Media-Player von Better Kodi ist nicht verfügbar, daher wurde nichts gesendet. Ist der Kodi-Media-Player verfügbar?"
     },
     "wake_timeout": {
-      "message": "Kodi ist nicht innerhalb von {seconds} Sekunden aufgewacht ({entity_id} ist noch aus). Prüfe deine Einschalt-Automation für Kodi (zum Beispiel Wake on LAN) bei den Automationen des Kodi-Geräts."
+      "message": "Kodi ist nicht innerhalb von {seconds} Sekunden aufgewacht ({entity_id} ist noch ausgeschaltet). Prüfe deine Einschalt-Automation für Kodi (zum Beispiel Wake on LAN) bei den Automationen des Kodi-Geräts."
+    },
+    "no_turn_on_automation": {
+      "message": "Kodi kann nicht geweckt werden: Für {entity_id} gibt es keine Automation „Kodi eingeschaltet“. Lege eine bei den Automationen des Kodi-Geräts an (zum Beispiel mit Wake on LAN) oder schalte das Aufwecken in den Optionen von Better Kodi ab."
     }
   },
   "services": {

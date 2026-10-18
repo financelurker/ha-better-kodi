@@ -1,5 +1,6 @@
 """Better Kodi: queue, URL casting and handover on top of the Kodi integration."""
 
+import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass, field
 import logging
@@ -53,6 +54,7 @@ class BetterKodiData:
     addons_loaded_at: float | None = None
     queue_listeners: list[QueueListener] = field(default_factory=list)
     link: str = ""
+    wake_task: asyncio.Task[None] | None = None
     link_listeners: list[QueueListener] = field(default_factory=list)
 
     def set_link(self, link: str) -> None:

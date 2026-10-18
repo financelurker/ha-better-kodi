@@ -343,6 +343,13 @@ async def test_queue_covers(kodi: FakeKodi) -> None:
             "thumbnail": "image://video@smb%3a%2f%2fnas%2fc.mkv/",
         },
         {"file": "plugin://x/d", "label": "d", "thumbnail": ""},
+        {"file": "plugin://x/e", "label": "e", "thumbnail": "image://DefaultVideo.png/"},
+        {
+            "file": "plugin://x/f",
+            "label": "f",
+            "thumbnail": "image://DefaultVideo.png/transform?size=thumb",
+        },
+        {"file": "plugin://x/g", "label": "g", "thumbnail": "DefaultVideo.png"},
     ]
     queue.known.remember("plugin://x/b", "B", "https://img.example/b.jpg")
     assert [item.thumbnail for item in await queue.items()] == [
@@ -351,4 +358,7 @@ async def test_queue_covers(kodi: FakeKodi) -> None:
         "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
         "image://video@smb%3a%2f%2fnas%2fc.mkv/",
         None,
+        None,  # placeholder
+        None,  # placeholder with options
+        None,  # not wrapped: not a usable image
     ]
