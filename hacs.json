@@ -1,4 +1,6 @@
 {
   "name": "Better Kodi",
-  "homeassistant": "2026.10.0"
+  "homeassistant": "2026.10.0",
+  "zip_release": true,
+  "filename": "better_kodi.zip"
 }
