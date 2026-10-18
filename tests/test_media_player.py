@@ -571,3 +571,128 @@ async def test_play_link_from_shared_text(
 ) -> None:
     await play_media(hass, player, "Look at this https://cdn.example/a.mp4 !")
     assert fakes[kodi_source.host].files() == ["https://cdn.example/a.mp4"]
+
+
+def kodi_folder(source: KodiSource, *children: dict) -> dict:
+    return {
+        source.entity_id: {
+            "title": "Movies",
+            "media_class": "directory",
+            "media_content_id": "",
+            "media_content_type": "library_movies",
+            "can_play": False,
+            "can_expand": True,
+            "children": list(children),
+        }
+    }
+
+
+MOVIE = {
+    "title": "Film",
+    "media_class": "movie",
+    "media_content_id": "17",
+    "media_content_type": "movie",
+    "can_play": True,
+    "can_expand": False,
+    "thumbnail": "/thumb.jpg",
+}
+SHOW = {
+    "title": "Show",
+    "media_class": "tv_show",
+    "media_content_id": "4",
+    "media_content_type": "tvshow",
+    "can_play": True,
+    "can_expand": True,
+}
+CHANNEL = {
+    "title": "Channel",
+    "media_class": "channel",
+    "media_content_id": "3",
+    "media_content_type": "channel",
+    "can_play": True,
+    "can_expand": False,
+}
+
+
+async def test_browser_offers_enqueue_choices(
+    hass: HomeAssistant, kodi_source: KodiSource, fakes: dict[str, FakeKodi], player: str
+) -> None:
+    kodi = fakes[kodi_source.host]
+    async_mock_service(
+        hass,
+        MP_DOMAIN,
+        "browse_media",
+        response=kodi_folder(kodi_source, MOVIE, SHOW, CHANNEL),
+        supports_response=SupportsResponse.ONLY,
+    )
+    entity = entity_of(hass, player)
+    hass.config.language = "de"
+    folder = await entity.async_browse_media("library_movies", "")
+    movie, show, channel = folder.children
+    assert (movie.can_play, movie.can_expand, movie.title) == (True, True, "Film")
+    assert movie.media_content_id.startswith("better_kodi://choose/")
+    assert (show.media_content_id, show.can_expand) == ("4", True)  # folders stay as they are
+    assert (channel.media_content_id, channel.can_expand) == ("3", False)  # can't be queued
+
+    choices = await entity.async_browse_media(movie.media_content_type, movie.media_content_id)
+    assert choices.title == "Film"
+    assert [child.title for child in choices.children] == [
+        "▶ Jetzt abspielen",
+        "⏭ Als Nächstes",
+        "➕ Ans Ende",
+        "⟲ Warteschlange ersetzen",
+    ]
+    assert all(child.thumbnail == "/thumb.jpg" for child in choices.children)
+
+    # The play button on the item itself plays right away.
+    await play_media(hass, player, "https://cdn.example/a.mp4")
+    await play_media(hass, player, movie.media_content_id, "movie")
+    assert kodi.playlist[1]["id"] == 17
+    assert kodi.position == 1
+
+    # "Ans Ende" from the choices
+    add = choices.children[2]
+    await play_media(hass, player, add.media_content_id, add.media_content_type)
+    assert [entry.get("id") for entry in kodi.playlist] == [None, 17, 17]
+    assert kodi.position == 1
+
+
+async def test_choices_for_media_sources(
+    hass: HomeAssistant, kodi_source: KodiSource, fakes: dict[str, FakeKodi], player: str
+) -> None:
+    item = {
+        "title": "Clip",
+        "media_class": "video",
+        "media_content_id": "media-source://media_source/local/clip mit leerzeichen.mp4",
+        "media_content_type": "video/mp4",
+        "can_play": True,
+        "can_expand": False,
+    }
+    async_mock_service(
+        hass,
+        MP_DOMAIN,
+        "browse_media",
+        response=kodi_folder(kodi_source, item),
+        supports_response=SupportsResponse.ONLY,
+    )
+    entity = entity_of(hass, player)
+    (wrapped,) = (await entity.async_browse_media("library_movies", "")).children
+    choices = await entity.async_browse_media(wrapped.media_content_type, wrapped.media_content_id)
+    with patch(
+        "custom_components.better_kodi.media_player.media_source.async_resolve_media"
+    ) as resolve:
+        resolve.return_value.url = "https://cdn.example/clip.mp4"
+        await play_media(hass, player, choices.children[3].media_content_id, "video/mp4")
+    assert resolve.call_args.args[1] == item["media_content_id"]
+    assert fakes[kodi_source.host].files() == ["https://cdn.example/clip.mp4"]
+
+
+async def test_choices_after_restart_still_work(
+    hass: HomeAssistant, kodi_source: KodiSource, fakes: dict[str, FakeKodi], player: str
+) -> None:
+    """The browser may keep an old choices ID; it still names a valid item."""
+    entity = entity_of(hass, player)
+    choices = await entity.async_browse_media("movie", "better_kodi://choose/movie/21")
+    assert len(choices.children) == 4
+    await play_media(hass, player, choices.children[0].media_content_id, "movie")
+    assert fakes[kodi_source.host].playlist[0]["id"] == 21

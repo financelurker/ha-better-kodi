@@ -5,6 +5,7 @@ from datetime import datetime
 import logging
 import re
 from typing import Any
+from urllib.parse import quote, unquote
 
 from homeassistant.components import media_source
 from homeassistant.components.media_player import (
@@ -92,6 +93,9 @@ OWN_FEATURES = (
     | MediaPlayerEntityFeature.CLEAR_PLAYLIST
 )
 
+CHOICES_PREFIX = "better_kodi://choose/"
+ENQUEUE_PREFIX = "better_kodi://enqueue/"
+CHOICE_ORDER = ("play", "next", "add", "replace")
 LINK_IN_TEXT = re.compile(r"https?://\S+")
 TRAILING_PUNCTUATION = ".,;:!?)]}>'\"»“”"
 PLAYABLE_SCHEMES = frozenset({"http", "https", *KODI_PATH_SCHEMES})
@@ -124,6 +128,7 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
         self._attr_unique_id = entry.entry_id
         self.device_entry = async_entity_id_to_device(hass, self._source_entity_id)
         self._queue_refresher: Debouncer[Any] | None = None
+        self._choice_items: dict[str, BrowseMedia] = {}
 
     # --- Lifecycle ----------------------------------------------------------
 
@@ -398,6 +403,12 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
         mode = EnqueueMode(enqueue) if enqueue else EnqueueMode.PLAY
 
         media_id = extract_link(media_id)
+        if media_id.startswith(ENQUEUE_PREFIX):
+            mode_text, _, encoded = media_id.removeprefix(ENQUEUE_PREFIX).partition("/")
+            mode = EnqueueMode(mode_text)
+            media_type, media_id = _decode(encoded)
+        elif media_id.startswith(CHOICES_PREFIX):
+            media_type, media_id = _decode(media_id.removeprefix(CHOICES_PREFIX))
         if media_id.startswith(QUEUE_ITEM_PREFIX):
             position = _queue_position(media_id)
             await self._run(self._data.queue.play_position(position))
@@ -591,6 +602,8 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
         """Browse the Kodi library, with the queue as an extra folder."""
         if media_content_type == QUEUE_CONTENT_TYPE:
             return await self._async_browse_queue()
+        if media_content_id and media_content_id.startswith(CHOICES_PREFIX):
+            return await self._async_browse_choices(media_content_id)
 
         data: dict[str, Any] = {ATTR_ENTITY_ID: self._source_entity_id}
         if media_content_type is not None:
@@ -611,6 +624,7 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
         if payload is None:
             raise BrowseError(f"Kodi returned nothing for {media_content_id}")
         result = browse_media_from(payload)
+        result.children = [self._offer_choices(child) for child in result.children or []] or None
         if media_content_type in (None, "library") and media_content_id in (None, "", "library"):
             result.children = [
                 await self._async_browse_queue(as_child=True),
@@ -618,8 +632,58 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
             ]
         return result
 
+    def _offer_choices(self, item: BrowseMedia) -> BrowseMedia:
+        """Let a playable item open "play now / next / add / replace".
+
+        The item stays playable, so its play button still plays it right away.
+        """
+        if not item.can_play or item.can_expand or not _can_enqueue(item):
+            return item
+        choices_id = CHOICES_PREFIX + _encode(item.media_content_type, item.media_content_id)
+        self._choice_items[choices_id] = item
+        while len(self._choice_items) > 1000:
+            del self._choice_items[next(iter(self._choice_items))]
+        return BrowseMedia(
+            media_class=item.media_class,
+            media_content_id=choices_id,
+            media_content_type=item.media_content_type,
+            title=item.title,
+            can_play=True,
+            can_expand=True,
+            thumbnail=item.thumbnail,
+            children_media_class=item.media_class,
+        )
+
+    async def _async_browse_choices(self, choices_id: str) -> BrowseMedia:
+        media_type, media_id = _decode(choices_id.removeprefix(CHOICES_PREFIX))
+        item = self._choice_items.get(choices_id)
+        texts = await self._async_browse_texts()
+        children = [
+            BrowseMedia(
+                media_class=item.media_class if item else MediaClass.VIDEO,
+                media_content_id=f"{ENQUEUE_PREFIX}{mode}/" + _encode(media_type, media_id),
+                media_content_type=media_type,
+                title=texts.get(mode, mode),
+                can_play=True,
+                can_expand=False,
+                thumbnail=item.thumbnail if item else None,
+            )
+            for mode in CHOICE_ORDER
+        ]
+        return BrowseMedia(
+            media_class=item.media_class if item else MediaClass.VIDEO,
+            media_content_id=choices_id,
+            media_content_type=media_type,
+            title=item.title if item else texts.get("play", "play"),
+            can_play=True,
+            can_expand=True,
+            thumbnail=item.thumbnail if item else None,
+            children=children,
+            children_media_class=children[0].media_class,
+        )
+
     async def _async_browse_queue(self, *, as_child: bool = False) -> BrowseMedia:
-        title = await self._async_queue_title()
+        title = (await self._async_browse_texts()).get("queue", "Queue")
         if as_child:
             return BrowseMedia(
                 media_class=MediaClass.PLAYLIST,
@@ -656,11 +720,17 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
             children_media_class=MediaClass.VIDEO,
         )
 
-    async def _async_queue_title(self) -> str:
+    async def _async_browse_texts(self) -> dict[str, str]:
+        """Return the translated media browser texts (queue folder, choices)."""
         translations = await async_get_translations(
             self.hass, self.hass.config.language, "selector", [DOMAIN]
         )
-        return translations.get(f"component.{DOMAIN}.selector.browse.options.queue", "Queue")
+        prefix = f"component.{DOMAIN}.selector.browse.options."
+        return {
+            key.removeprefix(prefix): value
+            for key, value in translations.items()
+            if key.startswith(prefix)
+        }
 
     def _queue_thumbnail(self, position: int, thumbnail: str | None) -> str | None:
         if not thumbnail:
@@ -691,6 +761,23 @@ def extract_link(text: str) -> str:
     if match := LINK_IN_TEXT.search(text):
         return match.group(0).rstrip(TRAILING_PUNCTUATION)
     return text
+
+
+def _encode(media_type: str, media_id: str) -> str:
+    return f"{quote(str(media_type), safe='')}/{quote(media_id, safe='')}"
+
+
+def _decode(encoded: str) -> tuple[str, str]:
+    media_type, _, media_id = encoded.partition("/")
+    return unquote(media_type), unquote(media_id)
+
+
+def _can_enqueue(item: BrowseMedia) -> bool:
+    """Return True for items that Better Kodi can put into the queue."""
+    media_id = item.media_content_id or ""
+    if media_source.is_media_source_id(media_id) or _is_playable_link(media_id):
+        return True
+    return str(item.media_content_type).lower() in LIBRARY_ID_KEYS and media_id.isdigit()
 
 
 def _is_playable_link(media_id: str) -> bool:

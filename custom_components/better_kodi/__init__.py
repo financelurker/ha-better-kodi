@@ -32,7 +32,7 @@ from .services import async_setup_services
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = [Platform.MEDIA_PLAYER]
+PLATFORMS = [Platform.MEDIA_PLAYER, Platform.TEXT, Platform.BUTTON]
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 ADDON_CACHE_SECONDS = 600
 NOTIFICATIONS = ("Playlist.", "Player.OnPlay", "Player.OnStop", "Player.OnAVStart")
@@ -52,6 +52,14 @@ class BetterKodiData:
     addons: frozenset[str] = frozenset()
     addons_loaded_at: float | None = None
     queue_listeners: list[QueueListener] = field(default_factory=list)
+    link: str = ""
+    link_listeners: list[QueueListener] = field(default_factory=list)
+
+    def set_link(self, link: str) -> None:
+        """Store the link of the link field and tell its entity."""
+        self.link = link
+        for listener in list(self.link_listeners):
+            listener()
 
     async def async_get_addons(self, *, force: bool = False) -> frozenset[str]:
         """Return the IDs of enabled video add-ons, refreshed every few minutes."""

@@ -76,6 +76,25 @@
           }
         }
       }
+    },
+    "text": {
+      "link": {
+        "name": "Link"
+      }
+    },
+    "button": {
+      "play_now": {
+        "name": "Link jetzt abspielen"
+      },
+      "play_next": {
+        "name": "Link als Nächstes"
+      },
+      "add_to_queue": {
+        "name": "Link ans Ende"
+      },
+      "replace_queue": {
+        "name": "Warteschlange durch Link ersetzen"
+      }
     }
   },
   "exceptions": {
@@ -111,6 +130,12 @@
     },
     "source_missing": {
       "message": "Der Kodi-Media-Player, den Better Kodi erweitert, existiert nicht mehr. Entferne diesen Better-Kodi-Eintrag oder richte die Kodi-Integration erneut ein."
+    },
+    "no_link": {
+      "message": "Füge zuerst einen Link in das Feld „Link“ ein."
+    },
+    "no_player": {
+      "message": "Der Media-Player von Better Kodi ist nicht verfügbar."
     }
   },
   "services": {
@@ -178,7 +203,11 @@
   "selector": {
     "browse": {
       "options": {
-        "queue": "Warteschlange"
+        "queue": "Warteschlange",
+        "play": "▶ Jetzt abspielen",
+        "next": "⏭ Als Nächstes",
+        "add": "➕ Ans Ende",
+        "replace": "⟲ Warteschlange ersetzen"
       }
     }
   }
