@@ -189,6 +189,7 @@ async def test_turn_on_sends_wake_on_lan(
     sent, patcher = wakes_after(hass, kodi_source, kodi, 1)
     with patcher:
         await entity_of(hass, player).async_turn_on()
+        await asyncio.sleep(0.05)  # let the simulated Kodi wake up (no lingering timer)
     assert sent == [(MAC, "255.255.255.255")]
     assert forwarded == []
 
