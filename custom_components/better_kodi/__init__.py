@@ -38,6 +38,7 @@ from .kodi_client import KodiAuthError, KodiClient, KodiError
 from .queue import KodiQueue
 from .resolvers import async_youtube_title
 from .services import async_setup_services
+from .share import async_setup_share
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -129,8 +130,9 @@ def get_option(entry: ConfigEntry, key: str) -> Any:
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    """Register the Better Kodi services."""
+    """Register the Better Kodi services and listen for links shared from phones."""
     async_setup_services(hass)
+    async_setup_share(hass)
     return True
 
 

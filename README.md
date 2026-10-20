@@ -67,6 +67,7 @@ Under **Settings → Devices & services → Better Kodi → Configure**:
 | Wait at most | 120 s | How long to wait for Kodi to wake up. |
 | Choices in the media browser | on | See [Play next or add to the queue from the media browser](#play-next-or-add-to-the-queue-from-the-media-browser). |
 | Link field and buttons | on | See [Paste a link](#paste-a-link-link-field-and-buttons). Off removes them. |
+| Links shared from phones | Add to queue, all phones | See [Share from your phone](#share-from-your-phone). |
 | Look up titles online | on | Asks YouTube for titles and images of YouTube entries. Off: Home Assistant doesn't contact YouTube for Better Kodi. |
 
 ### Switching Kodi on and off
@@ -157,27 +158,18 @@ Good to know: media picked this way in the media selector of an automation or sc
 
 Prefer the media browser as with other players (a click plays right away)? Switch off **Choices in the media browser** in the options.
 
-### Share from your Android phone
+### Share from your phone
 
-The Home Assistant Companion app for Android can share links to Home Assistant, which fires a `mobile_app.share` event:
+Share a link from any app on your Android phone (YouTube, Brave, Chrome, …) with **Home Assistant**, and Kodi plays it. No automation needed.
 
-```yaml
-automation:
-  - alias: Shared link to Kodi queue
-    triggers:
-      - trigger: event
-        event_type: mobile_app.share
-    actions:
-      - action: media_player.play_media
-        target:
-          entity_id: media_player.living_room_kodi_2
-        data:
-          media_content_type: url
-          media_content_id: "{{ trigger.event.data.url or trigger.event.data.text or trigger.event.data.subject }}"
-          enqueue: add
-```
+- With one Kodi, the link goes straight to it (added to the queue by default; if nothing is playing, it starts playing).
+- With several Kodis, your phone shows a notification **"Which Kodi should play …?"** with one button per Kodi (the one that is playing first). Tap one, and the link goes there. The question is valid for 10 minutes; Android shows at most three buttons.
+- If the link can't be played (for example the YouTube add-on is missing, or Kodi doesn't wake up), the phone gets a notification with the reason.
+- If the shared text contains more than the link, Better Kodi picks out the first link. Shares without a link are ignored.
 
-Which field holds the link depends on the app you share from (`url` or `text`). If the shared text contains more than the link, Better Kodi picks out the first link.
+Per Kodi, in the options under **Links shared from phones**: what a shared link does (**Play now**, **Play next**, **Add to queue**, **Replace queue**, or **Off**), **Only from these phones** (for example the bedroom Kodi only for the tablet in the bedroom; a phone listed for Kodis sends only to those, and without asking if it's just one), and whether errors are reported on the phone.
+
+Asking and error notifications need the phone's notifications from the Home Assistant app (`notify.mobile_app_…`). If several Kodis could take the link but the phone can't be asked (no notifications, or Home Assistant doesn't know the phone), the link goes to the Kodi that is playing, if exactly one is; otherwise nothing is played. YouTube playlists can only be played right away: set **Play now** if you share playlists, otherwise the phone reports that they can't be queued. If you had built a share automation yourself (as in earlier versions of this README), delete it, or links play twice.
 
 ### The queue
 

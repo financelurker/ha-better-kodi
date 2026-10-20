@@ -37,6 +37,9 @@ from .const import (
     CONF_ONLINE_LOOKUPS,
     CONF_POWER_OFF,
     CONF_POWER_ON,
+    CONF_SHARE_DEVICES,
+    CONF_SHARE_ENQUEUE,
+    CONF_SHARE_NOTIFY,
     CONF_SOURCE_ENTITY_ID,
     CONF_SOURCE_ENTITY_UUID,
     CONF_WAKE,
@@ -50,12 +53,14 @@ from .const import (
     POWER_OFF_METHODS,
     POWER_ON_MODES,
     POWER_ON_WAKE_ON_LAN,
+    SHARE_MODES,
 )
 from .kodi_client import KodiAuthError, KodiError
 from .power import async_read_mac, normalize_mac
 
 SECTION_POWER = "power"
 SECTION_FEATURES = "features"
+SECTION_SHARE = "share"
 MAC_DETECT_TIMEOUT = 5
 CONNECTION_KEYS = (CONF_HOST, CONF_PORT, CONF_WS_PORT, CONF_USERNAME, CONF_PASSWORD, CONF_SSL)
 
@@ -305,7 +310,9 @@ class BetterKodiOptionsFlow(OptionsFlowWithReload):
         values = {**DEFAULT_OPTIONS, **self.config_entry.options}
         if user_input is not None:
             power = user_input.get(SECTION_POWER, {})
-            values = {**values, **power, **user_input.get(SECTION_FEATURES, {})}
+            share = user_input.get(SECTION_SHARE, {})
+            values = {**values, **power, **user_input.get(SECTION_FEATURES, {}), **share}
+            values[CONF_SHARE_DEVICES] = list(share.get(CONF_SHARE_DEVICES) or [])
             mac_text = (power.get(CONF_MAC) or "").strip()  # an emptied field is left out
             mac = normalize_mac(mac_text)
             values[CONF_MAC] = mac or mac_text
@@ -390,9 +397,27 @@ class BetterKodiOptionsFlow(OptionsFlowWithReload):
                 for key in (CONF_BROWSE_CHOICES, CONF_LINK_ENTITIES, CONF_ONLINE_LOOKUPS)
             }
         )
+        devices = values.get(CONF_SHARE_DEVICES) or []
+        share = probatio.Schema(
+            {
+                probatio.Required(CONF_SHARE_ENQUEUE, default=values[CONF_SHARE_ENQUEUE]): choice(
+                    CONF_SHARE_ENQUEUE, SHARE_MODES
+                ),
+                probatio.Optional(
+                    CONF_SHARE_DEVICES,
+                    **({"description": {"suggested_value": devices}} if devices else {}),
+                ): selector.DeviceSelector(
+                    selector.DeviceSelectorConfig(integration="mobile_app", multiple=True)
+                ),
+                probatio.Required(
+                    CONF_SHARE_NOTIFY, default=values[CONF_SHARE_NOTIFY]
+                ): selector.BooleanSelector(),
+            }
+        )
         return probatio.Schema(
             {
                 probatio.Required(SECTION_POWER): section(power),
+                probatio.Required(SECTION_SHARE): section(share),
                 probatio.Required(SECTION_FEATURES): section(features),
             }
         )

@@ -21,6 +21,8 @@ from custom_components.better_kodi.const import (
     CONF_ONLINE_LOOKUPS,
     CONF_POWER_OFF,
     CONF_POWER_ON,
+    CONF_SHARE_ENQUEUE,
+    CONF_SHARE_NOTIFY,
     CONF_WAKE,
     CONF_WAKE_TIMEOUT,
     DEFAULT_OPTIONS,
@@ -66,6 +68,7 @@ def power(**changes: Any) -> dict[str, Any]:
     }
 
 
+SHARE = {CONF_SHARE_ENQUEUE: "add", CONF_SHARE_NOTIFY: True}
 FEATURES = {CONF_BROWSE_CHOICES: False, CONF_LINK_ENTITIES: True, CONF_ONLINE_LOOKUPS: False}
 
 
@@ -88,7 +91,7 @@ async def test_options_flow_reads_the_mac_from_kodi(
     assert suggested(result, "power", CONF_MAC) == "AA:BB:CC:DD:EE:FF"
 
     result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {"power": power(), "features": FEATURES}
+        result["flow_id"], {"power": power(), "share": SHARE, "features": FEATURES}
     )
     await hass.async_block_till_done()
     assert result["type"] is FlowResultType.CREATE_ENTRY
@@ -115,17 +118,19 @@ async def test_options_flow_with_kodi_off(
     without_mac = power()
     del without_mac[CONF_MAC]
     result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {"power": without_mac, "features": FEATURES}
+        result["flow_id"], {"power": without_mac, "share": SHARE, "features": FEATURES}
     )
     assert result["errors"] == {"base": "mac_required"}
 
     result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {"power": power(**{CONF_MAC: "nope"}), "features": FEATURES}
+        result["flow_id"],
+        {"power": power(**{CONF_MAC: "nope"}), "share": SHARE, "features": FEATURES},
     )
     assert result["errors"] == {"base": "invalid_mac"}
 
     result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {"power": power(**{CONF_BROADCAST: "kodi.lan"}), "features": FEATURES}
+        result["flow_id"],
+        {"power": power(**{CONF_BROADCAST: "kodi.lan"}), "share": SHARE, "features": FEATURES},
     )
     assert result["errors"] == {"base": "invalid_broadcast"}
 
@@ -144,6 +149,7 @@ async def test_options_flow_keeps_defaults_and_allows_clearing_the_mac(
         result["flow_id"],
         {
             "power": automation,
+            "share": SHARE,
             "features": {key: True for key in FEATURES},
         },
     )
@@ -336,7 +342,11 @@ async def test_old_options_are_upgraded_and_broadcast_is_trimmed(
     result = await hass.config_entries.options.async_init(entry.entry_id)
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
-        {"power": power(**{CONF_BROADCAST: " 192.168.1.255 "}), "features": FEATURES},
+        {
+            "power": power(**{CONF_BROADCAST: " 192.168.1.255 "}),
+            "share": SHARE,
+            "features": FEATURES,
+        },
     )
     await hass.async_block_till_done()
     assert result["type"] is FlowResultType.CREATE_ENTRY
@@ -353,6 +363,7 @@ async def test_link_entities_switched_off_in_the_options_flow(
         result["flow_id"],
         {
             "power": power(**{CONF_POWER_ON: "automation"}),
+            "share": SHARE,
             "features": {**FEATURES, CONF_LINK_ENTITIES: False},
         },
     )
