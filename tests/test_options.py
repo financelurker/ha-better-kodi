@@ -316,3 +316,45 @@ async def test_media_source_backends_are_an_extension_point(
         await play("http://media.example/stream/0")
     assert kodi.playlist[0]["id"] == 42
     assert kodi.playlist[1]["file"] == "http://media.example/stream/0"
+
+
+async def test_mac_is_not_asked_while_kodi_is_off(
+    hass: HomeAssistant, kodi_source: KodiSource, fakes: dict[str, FakeKodi]
+) -> None:
+    entry = await setup_better_kodi(hass, kodi_source)
+    hass.states.async_set(kodi_source.entity_id, "off")
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    assert suggested(result, "power", CONF_MAC) is None
+    assert "XBMC.GetInfoLabels" not in fakes[kodi_source.host].method_calls()
+
+
+async def test_old_options_are_upgraded_and_broadcast_is_trimmed(
+    hass: HomeAssistant, kodi_source: KodiSource
+) -> None:
+    entry = await setup_better_kodi(hass, kodi_source)
+    hass.config_entries.async_update_entry(entry, options={CONF_WAKE: False, CONF_WAKE_TIMEOUT: 60})
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {"power": power(**{CONF_BROADCAST: " 192.168.1.255 "}), "features": FEATURES},
+    )
+    await hass.async_block_till_done()
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options[CONF_BROADCAST] == "192.168.1.255"
+    assert set(entry.options) == set(DEFAULT_OPTIONS)
+
+
+async def test_link_entities_switched_off_in_the_options_flow(
+    hass: HomeAssistant, kodi_source: KodiSource
+) -> None:
+    entry = await setup_better_kodi(hass, kodi_source)
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            "power": power(**{CONF_POWER_ON: "automation"}),
+            "features": {**FEATURES, CONF_LINK_ENTITIES: False},
+        },
+    )
+    await hass.async_block_till_done()
+    assert link_entities(hass, entry) == []

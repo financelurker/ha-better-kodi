@@ -372,7 +372,6 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
             raise HomeAssistantError(
                 translation_domain=DOMAIN,
                 translation_key="power_off_not_allowed",
-                translation_placeholders={"method": method},
             ) from err
 
     async def _async_send_wake_on_lan(self) -> None:
@@ -583,9 +582,16 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
                 if not wake_on_lan:
                     await self._forward(SERVICE_TURN_ON)
                     await awake.wait()
+                sent = 0
                 while wake_on_lan and not awake.is_set():
                     # Packets get lost; Wake on LAN is safe to repeat (no toggle).
-                    await self._async_send_wake_on_lan()
+                    try:
+                        await self._async_send_wake_on_lan()
+                    except HomeAssistantError:
+                        if not sent:
+                            raise
+                        _LOGGER.debug("Wake on LAN packet failed; trying again", exc_info=True)
+                    sent += 1
                     with contextlib.suppress(TimeoutError):
                         await asyncio.wait_for(awake.wait(), WAKE_ON_LAN_REPEAT)
         except TimeoutError as err:

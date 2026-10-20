@@ -62,7 +62,7 @@ Under **Settings → Devices & services → Better Kodi → Configure**:
 | Switch Kodi on with | Kodi automation | **Wake on LAN**: Better Kodi sends the packet itself. **Kodi automation**: runs your "Kodi turned on" automation of the Kodi device, as the Kodi integration does. |
 | MAC address of Kodi | read from Kodi | Needed for Wake on LAN. Better Kodi reads it from Kodi when you open the options while Kodi is on. |
 | Broadcast address | `255.255.255.255` | Where the Wake on LAN packet goes. Use the broadcast address of Kodi's network (such as `192.168.1.255`) if the default doesn't reach Kodi. |
-| Switch Kodi off with | Kodi automation | **Suspend**, **Hibernate**, **Shut down** or **Quit Kodi** (Kodi commands), or your "Kodi turned off" automation. |
+| Switch Kodi off with | Kodi automation | **Suspend**, **Hibernate**, **Shut down** or **Quit Kodi** (Kodi commands), or your "Kodi turned off" automation. Quit Kodi leaves the device on (see below). |
 | Wake Kodi before sending | on | See below. |
 | Wait at most | 120 s | How long to wait for Kodi to wake up. |
 | Choices in the media browser | on | See [Play next or add to the queue from the media browser](#play-next-or-add-to-the-queue-from-the-media-browser). |
@@ -75,11 +75,14 @@ Better Kodi can switch Kodi on and off itself, so the usual Wake-on-LAN and susp
 
 1. Open Better Kodi's options **while Kodi is on**. The MAC address is filled in from Kodi.
 2. Set **Switch Kodi on with** to **Wake on LAN**, and **Switch Kodi off with** to, for example, **Suspend**.
-3. Delete your old turn-on/turn-off automations and scripts, or leave them: Better Kodi no longer runs them.
+3. Delete your old turn-on/turn-off automations and scripts. Better Kodi doesn't run them anymore for the directions you switched away from "Kodi automation" (only commands sent directly to the hidden Kodi media player still would).
 
 Needed on the Kodi device: Wake on LAN enabled (BIOS/UEFI and network adapter, often "Wake on Magic Packet"), and permission for Kodi to suspend, hibernate or shut down. Kodi reports what it may do; if it may not, Better Kodi says so instead of failing silently. Wake on LAN packets are broadcasts, so Home Assistant has to be in the same network as Kodi (with Home Assistant in Docker: host networking).
 
-Turning off the hidden Kodi media player directly still runs your automations, as before.
+Good to know:
+
+- The MAC address read from Kodi is that of the network connection Kodi uses right now. If that's Wi-Fi, check it: Wake on LAN usually only works over cable.
+- **Quit Kodi** only closes the Kodi app; the device stays on. Wake on LAN can't start Kodi again afterwards, so don't combine it with waking before sending.
 
 ### Kodi suspended or off: woken up automatically
 

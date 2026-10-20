@@ -159,7 +159,7 @@
       "message": "Could not send the Wake on LAN packet: {error}"
     },
     "power_off_not_allowed": {
-      "message": "Kodi reports that it may not do {method} on this device. Choose another way to switch off in Better Kodi's options, or allow it on the Kodi device (for example with polkit/logind on Linux)."
+      "message": "Kodi reports that it may not switch off this way on this device. Choose another way in Better Kodi's options, or allow it on the Kodi device (for example with polkit/logind on Linux)."
     }
   },
   "services": {
@@ -275,7 +275,7 @@
               "power_on": "Wake on LAN: Better Kodi sends the packet itself. Kodi automation: runs your \"Kodi turned on\" automation of the Kodi device.",
               "mac": "Read from Kodi while it is on. Needed for Wake on LAN.",
               "broadcast_address": "Where the Wake on LAN packet is sent. Use the broadcast address of Kodi's network (such as 192.168.1.255) if 255.255.255.255 doesn't work.",
-              "power_off": "Kodi command, or your \"Kodi turned off\" automation of the Kodi device. Suspending must be allowed on the Kodi device.",
+              "power_off": "Kodi command, or your \"Kodi turned off\" automation of the Kodi device. Suspending must be allowed on the Kodi device. \"Quit Kodi\" leaves the device on, so Wake on LAN can't start Kodi again afterwards.",
               "wake_on_send": "Only when the Kodi media player is off: switch Kodi on first and send once it is no longer off. When Kodi is on, everything is sent right away.",
               "wake_timeout": "How long to wait for Kodi to wake up before giving up."
             }

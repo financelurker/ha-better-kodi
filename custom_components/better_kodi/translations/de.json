@@ -159,7 +159,7 @@
       "message": "Das Wake-on-LAN-Paket konnte nicht gesendet werden: {error}"
     },
     "power_off_not_allowed": {
-      "message": "Kodi meldet, dass es {method} auf diesem Gerät nicht darf. Wähle in den Optionen von Better Kodi eine andere Art auszuschalten oder erlaube es auf dem Kodi-Gerät (unter Linux zum Beispiel über polkit/logind)."
+      "message": "Kodi meldet, dass es sich auf diesem Gerät nicht so ausschalten darf. Wähle in den Optionen von Better Kodi eine andere Art oder erlaube es auf dem Kodi-Gerät (unter Linux zum Beispiel über polkit/logind)."
     }
   },
   "services": {
@@ -243,8 +243,8 @@
     "power_off": {
       "options": {
         "automation": "Kodi-Automation („Kodi ausgeschaltet“)",
-        "suspend": "Ruhezustand",
-        "hibernate": "Ruhezustand auf Festplatte",
+        "suspend": "Standby",
+        "hibernate": "Ruhezustand",
         "shutdown": "Herunterfahren",
         "quit": "Kodi beenden"
       }
@@ -275,7 +275,7 @@
               "power_on": "Wake on LAN: Better Kodi schickt das Paket selbst. Kodi-Automation: startet deine Automation „Kodi eingeschaltet“ des Kodi-Geräts.",
               "mac": "Wird aus Kodi ausgelesen, während es läuft. Nötig für Wake on LAN.",
               "broadcast_address": "Wohin das Wake-on-LAN-Paket geht. Nimm die Broadcast-Adresse von Kodis Netz (etwa 192.168.1.255), falls 255.255.255.255 nicht klappt.",
-              "power_off": "Kodi-Befehl oder deine Automation „Kodi ausgeschaltet“ des Kodi-Geräts. Der Ruhezustand muss auf dem Kodi-Gerät erlaubt sein.",
+              "power_off": "Kodi-Befehl oder deine Automation „Kodi ausgeschaltet“ des Kodi-Geräts. Standby muss auf dem Kodi-Gerät erlaubt sein. „Kodi beenden“ lässt das Gerät an, Wake on LAN kann Kodi danach nicht wieder starten.",
               "wake_on_send": "Nur wenn der Kodi-Media-Player aus ist: Kodi zuerst einschalten und senden, sobald er nicht mehr aus ist. Läuft Kodi, wird sofort gesendet.",
               "wake_timeout": "Wie lange auf das Aufwachen von Kodi gewartet wird, bevor abgebrochen wird."
             }

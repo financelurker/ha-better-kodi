@@ -61,6 +61,8 @@ class PowerOffNotAllowed(Exception):
 
 async def async_power_off(client: KodiClient, method: str) -> None:
     """Switch Kodi off with one of its JSON-RPC power commands."""
+    # Fails if Kodi is unreachable, so that a dropped answer below means "going down".
+    await client.ping()
     if capability := POWER_CAPABILITIES.get(method):
         properties = await client.call("System.GetProperties", {"properties": [capability]})
         if not (properties or {}).get(capability):

@@ -20,6 +20,8 @@ from homeassistant.const import (
     CONF_PORT,
     CONF_SSL,
     CONF_USERNAME,
+    STATE_OFF,
+    STATE_UNAVAILABLE,
 )
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import section
@@ -311,7 +313,8 @@ class BetterKodiOptionsFlow(OptionsFlowWithReload):
                 errors["base"] = "invalid_mac"
             elif values[CONF_POWER_ON] == POWER_ON_WAKE_ON_LAN and mac is None:
                 errors["base"] = "mac_required"
-            elif not _is_ipv4(values.get(CONF_BROADCAST) or ""):
+            values[CONF_BROADCAST] = (values.get(CONF_BROADCAST) or "").strip()
+            if not errors and not _is_ipv4(values[CONF_BROADCAST]):
                 errors["base"] = "invalid_broadcast"
             if not errors:
                 values[CONF_WAKE_TIMEOUT] = int(values[CONF_WAKE_TIMEOUT])
@@ -329,6 +332,12 @@ class BetterKodiOptionsFlow(OptionsFlowWithReload):
         """Ask Kodi for its MAC address once, if it is running."""
         if not self._detected:
             self._detected = True
+            source_entity_id = er.async_resolve_entity_id(
+                er.async_get(self.hass), self.config_entry.data[CONF_SOURCE_ENTITY_UUID]
+            )
+            source = self.hass.states.get(source_entity_id) if source_entity_id else None
+            if source is None or source.state in (STATE_OFF, STATE_UNAVAILABLE):
+                return None  # a suspended Kodi wouldn't answer; don't make the form wait
             client = client_from_entry_data(self.hass, dict(self.config_entry.data))
             with contextlib.suppress(TimeoutError):
                 async with asyncio.timeout(MAC_DETECT_TIMEOUT):

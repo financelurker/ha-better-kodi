@@ -285,3 +285,50 @@ async def test_turn_off_with_automation_is_forwarded(
     await entity_of(hass, own_entity_id(hass, entry)).async_turn_off()
     assert "System.Suspend" not in fakes[kodi_source.host].method_calls()
     assert forwarded == [kodi_source.entity_id]
+
+
+async def test_first_wake_on_lan_failure_is_reported(hass: HomeAssistant, suspended) -> None:
+    _, player, kodi = suspended
+
+    async def fail(*args: object) -> None:
+        raise OSError("Network is unreachable")
+
+    with patch(SEND, fail), pytest.raises(HomeAssistantError) as err:
+        await play(hass, player)
+    assert err.value.translation_key == "wake_on_lan_failed"
+    assert kodi.files() == []
+
+
+async def test_later_wake_on_lan_failure_is_retried(
+    hass: HomeAssistant, suspended, kodi_source: KodiSource
+) -> None:
+    _, player, kodi = suspended
+    attempts: list[int] = []
+
+    async def flaky(hass_: HomeAssistant, mac: str, address: str) -> None:
+        attempts.append(1)
+        if len(attempts) == 2:
+            raise OSError("Network is unreachable")
+        if len(attempts) == 3:
+            kodi.offline = False
+            hass.states.async_set(kodi_source.entity_id, "idle", {"supported_features": 384})
+
+    with (
+        patch(SEND, flaky),
+        patch("custom_components.better_kodi.media_player.WAKE_ON_LAN_REPEAT", 0.01),
+    ):
+        await play(hass, player)
+    assert len(attempts) == 3
+    assert kodi.files() == [FILE]
+
+
+async def test_quit_when_kodi_is_unreachable(
+    hass: HomeAssistant, kodi_source: KodiSource, fakes: dict[str, FakeKodi]
+) -> None:
+    """Not reported as done when Kodi never got the command."""
+    entry = await setup_better_kodi(hass, kodi_source)
+    set_options(hass, entry, **{CONF_POWER_OFF: "quit"})
+    fakes[kodi_source.host].offline = True
+    with pytest.raises(HomeAssistantError) as err:
+        await entity_of(hass, own_entity_id(hass, entry)).async_turn_off()
+    assert err.value.translation_key == "cannot_connect"
