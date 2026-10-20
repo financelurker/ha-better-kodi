@@ -489,6 +489,15 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
             await self._run(self._data.queue.enqueue(item, mode))
             return
 
+        if _is_playable_link(media_id) and (
+            found := await backends.async_find_kodi_item(self._data.backend_context, media_id)
+        ):
+            # A media server link (for example Jellyfin's "Copy stream URL")
+            if (file := found.item.get("file")) and (found.title or found.thumbnail):
+                self._data.queue.known.remember(file, found.title, found.thumbnail)
+            await self._run(self._data.queue.enqueue(found.item, mode))
+            return
+
         if _is_playable_link(media_id):
             resolved = await self._async_resolve(media_id)
             if not resolved.queueable:

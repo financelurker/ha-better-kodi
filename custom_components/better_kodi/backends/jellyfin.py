@@ -30,7 +30,16 @@ _LOGGER = logging.getLogger(__name__)
 HTTP_TIMEOUT = aiohttp.ClientTimeout(total=10)
 ADDON_JELLYFIN = "plugin.video.jellyfin"
 PATH_PARTS_TO_MATCH = 2  # file name and its folder
-STREAM_PATH = re.compile(r"^(?P<prefix>.*)/Videos/(?P<id>[0-9a-fA-F]{32})/stream(?:\.\w+)?$")
+# Jellyfin item IDs: 32 hex digits, sometimes written as a GUID with dashes.
+_ITEM_ID = r"(?P<id>[0-9a-fA-F]{32}|[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})"
+# Links to one item's media: what Home Assistant's Jellyfin integration hands
+# players (…/Videos/<id>/stream), HLS (…/master.m3u8), and "Copy stream URL"
+# or download links of the Jellyfin apps (…/Items/<id>/Download).
+STREAM_PATH = re.compile(
+    rf"^(?P<prefix>.*?)(?:/Videos/{_ITEM_ID}/(?:stream(?:\.\w+)?|master\.m3u8|main\.m3u8)"
+    rf"|/Items/{_ITEM_ID.replace('?P<id>', '?P<id2>')}/Download)$",
+    re.IGNORECASE,
+)
 
 # Jellyfin item type -> (Kodi library method, result key, Kodi id key)
 KODI_LIBRARY = {
@@ -61,7 +70,7 @@ class JellyfinItem:
 
 
 def parse_stream_url(url: str) -> JellyfinStream | None:
-    """Recognize a Jellyfin video stream URL."""
+    """Recognize a Jellyfin stream or download URL of one item."""
     parts = urlsplit(url)
     if parts.scheme not in ("http", "https") or (match := STREAM_PATH.match(parts.path)) is None:
         return None
@@ -69,7 +78,8 @@ def parse_stream_url(url: str) -> JellyfinStream | None:
     server = f"{parts.scheme}://{parts.netloc}{match.group('prefix')}"
     # Jellyfin accepts "ApiKey"; "api_key" only while legacy authorization is on.
     api_key = query.get("apikey") or query.get("api_key")
-    return JellyfinStream(server, match.group("id").lower(), api_key)
+    item_id = (match.group("id") or match.group("id2")).replace("-", "").lower()
+    return JellyfinStream(server, item_id, api_key)
 
 
 def display_title(item: dict[str, Any]) -> str:
@@ -193,7 +203,7 @@ class JellyfinBackend(MediaSourceBackend):
     name = "jellyfin"
 
     def recognizes(self, url: str) -> bool:
-        """Return True for Jellyfin video stream URLs."""
+        """Return True for Jellyfin stream and download URLs."""
         return parse_stream_url(url) is not None
 
     async def async_kodi_item(self, context: BackendContext, url: str) -> BackendItem | None:

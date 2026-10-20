@@ -185,7 +185,7 @@ Integrations such as Jellyfin hand players a plain stream link. Kodi (and so Cas
 
 #### Jellyfin
 
-Better Kodi reads the item from Jellyfin and queues, in this order:
+This also applies to Jellyfin links you share, paste or send yourself: **Copy stream URL** in the Jellyfin app (`…/Items/<id>/Download?api_key=…`), stream and HLS links (`…/Videos/<id>/stream`, `…/master.m3u8`). Better Kodi reads the item from Jellyfin and queues, in this order:
 
 1. **The item from Kodi's own library**, if the Jellyfin for Kodi add-on synced it. Then Kodi knows title and artwork itself, and every app shows them.
 2. **Jellyfin for Kodi's play path**, if the add-on is installed but the item isn't synced. Playback is then reported to Jellyfin (watched state, resume).
@@ -236,6 +236,7 @@ Handover uses file paths, so it also works when the two Kodis have separate libr
 | YouTube playlists | YouTube add-on | ✓ | – |
 | Jellyfin web links (`…/web/#/details?id=…`) | Jellyfin for Kodi (`plugin.video.jellyfin`) | ✓ | ✓ |
 | Jellyfin web links | JellyCon (`plugin.video.jellycon`) | ✓ | – |
+| Jellyfin stream links ("Copy stream URL": `…/Items/<id>/Download?api_key=…`, `…/Videos/<id>/stream…`) | best with Jellyfin for Kodi (see [Jellyfin](#jellyfin)) | ✓ | ✓ |
 | Direct media URLs (`.mp4`, `.mkv`, `.m3u8`, …), Kodi paths (`smb://`, `nfs://`, `plugin://`) | nothing | ✓ | ✓ |
 | Media from Home Assistant's media browser | nothing | ✓ | ✓ |
 | Other web pages | SendToKodi (`plugin.video.sendtokodi`) | ✓ | ✓ |

@@ -19,6 +19,7 @@ __all__ = [
     "BackendContext",
     "BackendItem",
     "MediaSourceBackend",
+    "async_find_kodi_item",
     "async_kodi_item",
     "async_title",
 ]
@@ -34,15 +35,24 @@ def _backend_for(url: str) -> MediaSourceBackend | None:
     return None
 
 
+async def async_find_kodi_item(context: BackendContext, url: str) -> BackendItem | None:
+    """Return a backend's Kodi item for a URL, or None if no backend has one.
+
+    Used for links too (shared, pasted, sent with play_media): a media server
+    link copied from its app is the same kind of URL.
+    """
+    if (backend := _backend_for(url)) is None:
+        return None
+    try:
+        return await backend.async_kodi_item(context, url)
+    except Exception:
+        _LOGGER.exception("Media-source backend %s failed on %s", backend.name, url)
+        return None
+
+
 async def async_kodi_item(context: BackendContext, url: str) -> BackendItem:
     """Return the Kodi item for a resolved media browser URL."""
-    if (backend := _backend_for(url)) is not None:
-        try:
-            if (found := await backend.async_kodi_item(context, url)) is not None:
-                return found
-        except Exception:
-            _LOGGER.exception("Media-source backend %s failed on %s", backend.name, url)
-    return BackendItem(item={"file": url})
+    return await async_find_kodi_item(context, url) or BackendItem(item={"file": url})
 
 
 async def async_title(context: BackendContext, file: str) -> tuple[str | None, str | None] | None:
