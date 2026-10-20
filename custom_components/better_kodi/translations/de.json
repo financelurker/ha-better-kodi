@@ -160,6 +160,12 @@
     },
     "power_off_not_allowed": {
       "message": "Kodi meldet, dass es sich auf diesem Gerät nicht so ausschalten darf. Wähle in den Optionen von Better Kodi eine andere Art oder erlaube es auf dem Kodi-Gerät (unter Linux zum Beispiel über polkit/logind)."
+    },
+    "share_failed": {
+      "message": "Der geteilte Link konnte auf {kodi} nicht abgespielt werden: {error}"
+    },
+    "share_choose": {
+      "message": "Welches Kodi soll „{title}“ abspielen?"
     }
   },
   "services": {
@@ -248,6 +254,15 @@
         "shutdown": "Herunterfahren",
         "quit": "Kodi beenden"
       }
+    },
+    "share_enqueue": {
+      "options": {
+        "off": "Aus",
+        "play": "Jetzt abspielen",
+        "next": "Als Nächstes abspielen",
+        "add": "Zur Warteschlange hinzufügen",
+        "replace": "Warteschlange ersetzen"
+      }
     }
   },
   "options": {
@@ -278,6 +293,20 @@
               "power_off": "Kodi-Befehl oder deine Automation „Kodi ausgeschaltet“ des Kodi-Geräts. Standby muss auf dem Kodi-Gerät erlaubt sein. „Kodi beenden“ lässt das Gerät an, Wake on LAN kann Kodi danach nicht wieder starten.",
               "wake_on_send": "Nur wenn der Kodi-Media-Player aus ist: Kodi zuerst einschalten und senden, sobald er nicht mehr aus ist. Läuft Kodi, wird sofort gesendet.",
               "wake_timeout": "Wie lange auf das Aufwachen von Kodi gewartet wird, bevor abgebrochen wird."
+            }
+          },
+          "share": {
+            "name": "Vom Handy geteilte Links",
+            "description": "Teile einen Link aus einer beliebigen App am Handy mit der Home-Assistant-App, und er landet in Kodi. Ohne Automation. Nehmen mehrere Kodis Links von einem Handy an, fragt das Handy, welches.",
+            "data": {
+              "share_enqueue": "Geteilte Links",
+              "share_devices": "Nur von diesen Handys",
+              "share_notify_errors": "Fehler am Handy melden"
+            },
+            "data_description": {
+              "share_enqueue": "Was mit einem geteilten Link auf diesem Kodi passiert. Aus: dieses Kodi nimmt keine geteilten Links an.",
+              "share_devices": "Leer: Links von allen Handys. Hier eingetragene Handys senden nur an die Kodis, bei denen sie eingetragen sind.",
+              "share_notify_errors": "Schickt eine Benachrichtigung ans Handy, wenn ein geteilter Link nicht abgespielt werden kann."
             }
           },
           "features": {

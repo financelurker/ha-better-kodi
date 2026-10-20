@@ -115,6 +115,17 @@ Home Assistant's own interface (media browser, more-info dialog, media control c
 - A **Link** text entity and four buttons (play now, next, add, replace) on the Kodi device. Option *Link field and buttons* (default on); when off, the entities are removed from the entity registry on setup. A button calls `media_player.play_media` on Better Kodi's player with the link and clears the field on success. The link lives in memory only; it is empty after a restart.
 - **Choices in the media browser** (an `enqueue` passed together with a choice ID is ignored; the choice wins): every playable leaf that can be queued (Kodi library movies, episodes and music videos, media source items, links) is returned as expandable *and* playable, with the ID `better_kodi://choose/<type>/<id>`. The frontend opens expandable items on click and plays them with the play button, so a click shows four entries `better_kodi://enqueue/<mode>/<type>/<id>`, and the play button plays at once. Type and ID are URL-encoded. Title and thumbnail of the wrapped item are kept in memory (up to 1000); an unknown choices ID still works, with a generic title. Option *Choices in the media browser* (default on); when off, items are returned unchanged. Choice IDs stored earlier keep working either way.
 
+## Links shared from phones
+
+The Android app of Home Assistant fires `mobile_app.share` (`url`, `text`, `subject`, `device_id`) when something is shared with it. Better Kodi listens once per Home Assistant (in `async_setup`), so no automation is needed:
+
+- The link is the first `http(s)` link in `url`, `text` or `subject` (shared text is searched like in `play_media`). Shares without a link are ignored, so other automations on the event keep working.
+- The phone is found by `device_id`, as a device registry ID or as the `mobile_app` device identifier. Its notify service is `notify.mobile_app_<slug of the device name>`, if it exists.
+- Candidates: loaded Better Kodi entries with *Shared links* not off. Entries whose *Only from these phones* lists the phone win; otherwise entries with an empty list (all phones). Sorted by the Kodi entity's state: playing, paused, on/idle, off.
+- One candidate: `media_player.play_media` with the entry's enqueue setting (default `add`), so waking, resolving and errors work as everywhere else.
+- Several: a notification to the phone with one action per candidate (at most three, Android's limit), action ID `BETTER_KODI_SHARE_<token>_<entry id>`. The `mobile_app_notification_action` event with that ID sends the link. Pending choices live in memory for 10 minutes and are used once. An unknown phone, or one without notifications, can't be asked: nothing is played and a warning is logged, instead of guessing.
+- Errors are sent to the phone (option *Report errors on the phone*, default on), translated into Home Assistant's language.
+
 ## Media-source backends
 
 Items from Home Assistant's media browser are resolved with `media_source.async_resolve_media` to a URL. A **media-source backend** (`backends/`, interface `MediaSourceBackend` in `backends/base.py`) can turn the URL of one media server into a better Kodi item:

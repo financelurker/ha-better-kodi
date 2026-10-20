@@ -22,6 +22,13 @@ CONF_WAKE_TIMEOUT: Final = "wake_timeout"
 CONF_BROWSE_CHOICES: Final = "media_browser_choices"
 CONF_LINK_ENTITIES: Final = "link_entities"
 CONF_ONLINE_LOOKUPS: Final = "online_lookups"
+CONF_SHARE_ENQUEUE: Final = "share_enqueue"
+CONF_SHARE_DEVICES: Final = "share_devices"
+CONF_SHARE_NOTIFY: Final = "share_notify_errors"
+
+# Links shared from the Home Assistant app ("Share" on the phone)
+SHARE_OFF: Final = "off"
+SHARE_MODES: Final = (SHARE_OFF, "play", "next", "add", "replace")
 
 # How Better Kodi switches Kodi on: the Kodi integration's "turn on", which
 # only runs the user's "Kodi turned on" automation, or Wake on LAN itself.
@@ -55,6 +62,9 @@ DEFAULT_OPTIONS: Final = {
     CONF_BROWSE_CHOICES: True,
     CONF_LINK_ENTITIES: True,
     CONF_ONLINE_LOOKUPS: True,
+    CONF_SHARE_ENQUEUE: "add",
+    CONF_SHARE_DEVICES: [],
+    CONF_SHARE_NOTIFY: True,
 }
 
 DEFAULT_PORT: Final = 8080

@@ -160,6 +160,12 @@
     },
     "power_off_not_allowed": {
       "message": "Kodi reports that it may not switch off this way on this device. Choose another way in Better Kodi's options, or allow it on the Kodi device (for example with polkit/logind on Linux)."
+    },
+    "share_failed": {
+      "message": "Could not play the shared link on {kodi}: {error}"
+    },
+    "share_choose": {
+      "message": "Which Kodi should play \"{title}\"?"
     }
   },
   "services": {
@@ -248,6 +254,15 @@
         "shutdown": "Shut down",
         "quit": "Quit Kodi"
       }
+    },
+    "share_enqueue": {
+      "options": {
+        "off": "Off",
+        "play": "Play now",
+        "next": "Play next",
+        "add": "Add to queue",
+        "replace": "Replace queue"
+      }
     }
   },
   "options": {
@@ -278,6 +293,20 @@
               "power_off": "Kodi command, or your \"Kodi turned off\" automation of the Kodi device. Suspending must be allowed on the Kodi device. \"Quit Kodi\" leaves the device on, so Wake on LAN can't start Kodi again afterwards.",
               "wake_on_send": "Only when the Kodi media player is off: switch Kodi on first and send once it is no longer off. When Kodi is on, everything is sent right away.",
               "wake_timeout": "How long to wait for Kodi to wake up before giving up."
+            }
+          },
+          "share": {
+            "name": "Links shared from phones",
+            "description": "Share a link from any app on your phone to the Home Assistant app, and it goes to Kodi. No automation needed. If several Kodis take links from a phone, the phone asks which one.",
+            "data": {
+              "share_enqueue": "Shared links",
+              "share_devices": "Only from these phones",
+              "share_notify_errors": "Report errors on the phone"
+            },
+            "data_description": {
+              "share_enqueue": "What happens to a shared link on this Kodi. Off: this Kodi takes no shared links.",
+              "share_devices": "Empty: links from all phones. Phones listed here for this Kodi go only to the Kodis that list them.",
+              "share_notify_errors": "Sends a notification to the phone when a shared link can't be played."
             }
           },
           "features": {
