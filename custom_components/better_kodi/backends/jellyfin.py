@@ -41,6 +41,15 @@ STREAM_PATH = re.compile(
     re.IGNORECASE,
 )
 
+# Jellyfin item types that are folders or can't be played as one item
+NOT_PLAYABLE = frozenset(
+    {
+        "AggregateFolder", "BoxSet", "Book", "CollectionFolder", "Folder", "MusicAlbum",
+        "MusicArtist", "MusicGenre", "Person", "Photo", "PhotoAlbum", "Playlist",
+        "Season", "Series", "Studio", "UserView",
+    }
+)  # fmt: skip
+
 # Jellyfin item type -> (Kodi library method, result key, Kodi id key)
 KODI_LIBRARY = {
     "Movie": ("VideoLibrary.GetMovies", "movies", "movieid"),
@@ -165,6 +174,28 @@ async def async_find_in_kodi_library(
     return None
 
 
+async def async_find_id_in_kodi_library(client: KodiClient, item_id: str) -> dict[str, int] | None:
+    """Find a Jellyfin item that Jellyfin for Kodi synced, by its ID alone."""
+    found: list[dict[str, int]] = []
+    for method, result_key, id_key in KODI_LIBRARY.values():
+        for entry in await _library_search(client, method, result_key, "contains", f"id={item_id}"):
+            found.append({id_key: entry[id_key]})
+    return found[0] if len(found) == 1 else None
+
+
+def playable_url(stream: JellyfinStream, url: str) -> str:
+    """Return a URL Kodi can play itself.
+
+    A "Download" link needs the download permission and passes the key as
+    ``api_key``, which Jellyfin only accepts with legacy authorization. The
+    stream URL of the same item with both key names works either way.
+    """
+    if not urlsplit(url).path.lower().endswith("/download") or not stream.api_key:
+        return url
+    query = urlencode({"static": "true", "api_key": stream.api_key, "ApiKey": stream.api_key})
+    return f"{stream.server}/Videos/{stream.item_id}/stream?{query}"
+
+
 def _path_parts(path: str) -> list[str]:
     return [part for part in re.split(r"[\\/]", path) if part]
 
@@ -210,11 +241,20 @@ class JellyfinBackend(MediaSourceBackend):
         """Prefer Kodi's library item, then Jellyfin for Kodi, then the stream."""
         if (stream := parse_stream_url(url)) is None:
             return None
+        has_addon = ADDON_JELLYFIN in await context.get_addons()
         if (item := await async_get_item(context.session, stream)) is None:
+            # Home Assistant can't ask Jellyfin (name not resolvable, key refused,
+            # no key). The ID in the link is enough for Kodi and its add-on.
+            if library_item := await async_find_id_in_kodi_library(context.client, stream.item_id):
+                return BackendItem(item=library_item)
+            if has_addon:
+                return BackendItem(item={"file": addon_path(stream.item_id)})
+            return None
+        if item.kind in NOT_PLAYABLE:
             return None
         if library_item := await async_find_in_kodi_library(context.client, item):
             return BackendItem(item=library_item)  # Kodi knows title and artwork itself
-        file = addon_path(item.item_id) if ADDON_JELLYFIN in await context.get_addons() else url
+        file = addon_path(item.item_id) if has_addon else playable_url(stream, url)
         return BackendItem(item={"file": file}, title=item.title, thumbnail=item.thumbnail)
 
     async def async_title(

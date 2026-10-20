@@ -7,6 +7,7 @@ a subclass of ``MediaSourceBackend`` (see ``base.py``) and list an instance in
 
 import logging
 
+from ..redact import redact_url
 from .base import BackendContext, BackendItem, MediaSourceBackend
 from .jellyfin import JellyfinBackend
 
@@ -31,7 +32,7 @@ def _backend_for(url: str) -> MediaSourceBackend | None:
             if backend.recognizes(url):
                 return backend
         except Exception:
-            _LOGGER.exception("Media-source backend %s failed on %s", backend.name, url)
+            _LOGGER.exception("Media-source backend %s failed on %s", backend.name, redact_url(url))
     return None
 
 
@@ -46,7 +47,7 @@ async def async_find_kodi_item(context: BackendContext, url: str) -> BackendItem
     try:
         return await backend.async_kodi_item(context, url)
     except Exception:
-        _LOGGER.exception("Media-source backend %s failed on %s", backend.name, url)
+        _LOGGER.exception("Media-source backend %s failed on %s", backend.name, redact_url(url))
         return None
 
 
@@ -62,5 +63,5 @@ async def async_title(context: BackendContext, file: str) -> tuple[str | None, s
     try:
         return await backend.async_title(context, file)
     except Exception:
-        _LOGGER.exception("Media-source backend %s failed on %s", backend.name, file)
+        _LOGGER.exception("Media-source backend %s failed on %s", backend.name, redact_url(file))
         return None
