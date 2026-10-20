@@ -1,4 +1,4 @@
-"""Jellyfin items from Home Assistant's media browser.
+"""Media-source backend for Jellyfin items from Home Assistant's media browser.
 
 Home Assistant's Jellyfin integration hands players a stream URL such as
 ``http://jellyfin:8096/Videos/<id>/stream?static=true&api_key=…``. Kodi labels
@@ -22,7 +22,8 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 
 import aiohttp
 
-from .kodi_client import KodiClient, KodiError
+from ..kodi_client import KodiClient, KodiError
+from .base import BackendContext, BackendItem, MediaSourceBackend
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -184,3 +185,34 @@ async def _library_search(
 def addon_path(item_id: str) -> str:
     """Return the Jellyfin for Kodi play path of an item."""
     return f"plugin://{ADDON_JELLYFIN}/?" + urlencode({"mode": "play", "id": item_id})
+
+
+class JellyfinBackend(MediaSourceBackend):
+    """Jellyfin, through Home Assistant's Jellyfin integration."""
+
+    name = "jellyfin"
+
+    def recognizes(self, url: str) -> bool:
+        """Return True for Jellyfin video stream URLs."""
+        return parse_stream_url(url) is not None
+
+    async def async_kodi_item(self, context: BackendContext, url: str) -> BackendItem | None:
+        """Prefer Kodi's library item, then Jellyfin for Kodi, then the stream."""
+        if (stream := parse_stream_url(url)) is None:
+            return None
+        if (item := await async_get_item(context.session, stream)) is None:
+            return None
+        if library_item := await async_find_in_kodi_library(context.client, item):
+            return BackendItem(item=library_item)  # Kodi knows title and artwork itself
+        file = addon_path(item.item_id) if ADDON_JELLYFIN in await context.get_addons() else url
+        return BackendItem(item={"file": file}, title=item.title, thumbnail=item.thumbnail)
+
+    async def async_title(
+        self, context: BackendContext, file: str
+    ) -> tuple[str | None, str | None] | None:
+        """Read title and image of a stream entry from Jellyfin."""
+        if (stream := parse_stream_url(file)) is None:
+            return None
+        if (item := await async_get_item(context.session, stream)) is None:
+            return None
+        return item.title, item.thumbnail

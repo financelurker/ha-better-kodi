@@ -153,9 +153,16 @@ class KodiQueue:
     run several service calls at the same time.
     """
 
-    def __init__(self, client: KodiClient, title_lookup: TitleLookup | None = None) -> None:
+    def __init__(
+        self,
+        client: KodiClient,
+        title_lookup: TitleLookup | None = None,
+        *,
+        youtube_thumbnails: bool = True,
+    ) -> None:
         """Initialize with a Kodi client and an optional way to look up titles."""
         self.client = client
+        self._youtube_thumbnails = youtube_thumbnails
         self.known = KnownMedia()
         self._title_lookup = title_lookup
         self._lookups_running: dict[str, asyncio.Task[None]] = {}
@@ -222,7 +229,7 @@ class KodiQueue:
                     media_type=raw.get("type") or "unknown",
                     thumbnail=known_thumbnail
                     or _kodi_image(raw.get("thumbnail"))
-                    or youtube_thumbnail(file),
+                    or (youtube_thumbnail(file) if self._youtube_thumbnails else None),
                     duration=raw.get("duration") or None,
                     current=status.in_queue and status.position == index,
                 )

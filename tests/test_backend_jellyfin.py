@@ -6,7 +6,9 @@ from unittest.mock import patch
 import pytest
 from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
 
-from custom_components.better_kodi.jellyfin import (
+from custom_components.better_kodi.backends import BackendContext
+from custom_components.better_kodi.backends.jellyfin import (
+    JellyfinBackend,
     JellyfinItem,
     JellyfinStream,
     async_find_in_kodi_library,
@@ -14,7 +16,6 @@ from custom_components.better_kodi.jellyfin import (
     display_title,
     parse_stream_url,
 )
-from custom_components.better_kodi.resolvers import async_lookup_title
 from homeassistant.components.media_player import (
     ATTR_MEDIA_CONTENT_ID,
     ATTR_MEDIA_CONTENT_TYPE,
@@ -98,8 +99,15 @@ async def test_lookup_title_of_stream(
     hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
 ) -> None:
     aioclient_mock.get(f"{SERVER}/Items", json={"Items": [EPISODE]})
-    title, _ = await async_lookup_title(async_get_clientsession(hass), STREAM)
+    backend = JellyfinBackend()
+    context = BackendContext(async_get_clientsession(hass), FakeKodi(), _no_addons)  # type: ignore[arg-type]
+    assert backend.recognizes(STREAM)
+    title, _ = await backend.async_title(context, STREAM)
     assert title == "The Show – S01E02 – Pilot"
+
+
+async def _no_addons() -> frozenset[str]:
+    return frozenset()
 
 
 def item(**changes: Any) -> JellyfinItem:

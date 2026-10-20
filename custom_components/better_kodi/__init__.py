@@ -23,16 +23,26 @@ from homeassistant.helpers import config_validation as cv, entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.typing import ConfigType
 
+from . import backends
 from .assist import transfer_exposure
-from .const import CONF_HIDE_SOURCE, CONF_SOURCE_ENTITY_UUID, CONF_WS_PORT, DOMAIN
+from .const import (
+    CONF_HIDE_SOURCE,
+    CONF_LINK_ENTITIES,
+    CONF_ONLINE_LOOKUPS,
+    CONF_SOURCE_ENTITY_UUID,
+    CONF_WS_PORT,
+    DEFAULT_OPTIONS,
+    DOMAIN,
+)
 from .kodi_client import KodiAuthError, KodiClient, KodiError
 from .queue import KodiQueue
-from .resolvers import async_lookup_title
+from .resolvers import async_youtube_title
 from .services import async_setup_services
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = [Platform.MEDIA_PLAYER, Platform.TEXT, Platform.BUTTON]
+PLATFORMS = [Platform.MEDIA_PLAYER]
+LINK_PLATFORMS = [Platform.TEXT, Platform.BUTTON]  # link field and its buttons
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 ADDON_CACHE_SECONDS = 600
 NOTIFICATIONS = ("Playlist.", "Player.OnPlay", "Player.OnStop", "Player.OnAVStart")
@@ -54,6 +64,14 @@ class BetterKodiData:
     queue_listeners: list[QueueListener] = field(default_factory=list)
     link: str = ""
     link_listeners: list[QueueListener] = field(default_factory=list)
+    platforms: list[Platform] = field(default_factory=lambda: list(PLATFORMS))
+
+    @property
+    def backend_context(self) -> backends.BackendContext:
+        """Return what media-source backends may use."""
+        return backends.BackendContext(
+            session=self.web_session, client=self.client, get_addons=self.async_get_addons
+        )
 
     def set_link(self, link: str) -> None:
         """Store the link of the link field and tell its entity."""
@@ -105,6 +123,11 @@ def client_from_entry_data(hass: HomeAssistant, data: dict[str, Any]) -> KodiCli
     )
 
 
+def get_option(entry: ConfigEntry, key: str) -> Any:
+    """Return an option of an entry, or its default."""
+    return entry.options.get(key, DEFAULT_OPTIONS[key])
+
+
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Register the Better Kodi services."""
     async_setup_services(hass)
@@ -132,16 +155,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: BetterKodiConfigEntry) -
         _LOGGER.debug("Kodi at %s is not reachable yet: %s", entry.data[CONF_HOST], err)
 
     web_session = async_get_clientsession(hass)
+    online_lookups = bool(get_option(entry, CONF_ONLINE_LOOKUPS))
 
     async def look_up_title(file: str) -> tuple[str | None, str | None] | None:
-        return await async_lookup_title(web_session, file)
+        if (found := await backends.async_title(data.backend_context, file)) is not None:
+            return found
+        return await async_youtube_title(web_session, file) if online_lookups else None
 
     data = BetterKodiData(
         client=client,
-        queue=KodiQueue(client, look_up_title),
+        queue=KodiQueue(client, look_up_title, youtube_thumbnails=online_lookups),
         source_entity_id=source_entity_id,
         web_session=web_session,
     )
+    if get_option(entry, CONF_LINK_ENTITIES):
+        data.platforms.extend(LINK_PLATFORMS)
+    else:
+        _remove_link_entities(hass, entry)
     await data.async_get_addons(force=True)
     entry.runtime_data = data
 
@@ -154,13 +184,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: BetterKodiConfigEntry) -
         client.run_notifications(on_notification),
         f"{DOMAIN} notifications {entry.entry_id}",
     )
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    await hass.config_entries.async_forward_entry_setups(entry, data.platforms)
     return True
+
+
+def _remove_link_entities(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Remove the link field and buttons when they were switched off in the options."""
+    registry = er.async_get(hass)
+    for registry_entry in er.async_entries_for_config_entry(registry, entry.entry_id):
+        if registry_entry.domain in LINK_PLATFORMS:
+            registry.async_remove(registry_entry.entity_id)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: BetterKodiConfigEntry) -> bool:
     """Unload a config entry."""
-    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    return await hass.config_entries.async_unload_platforms(entry, entry.runtime_data.platforms)
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:

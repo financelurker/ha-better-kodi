@@ -30,6 +30,13 @@ class FakeKodi:
         self._pending_start: int | None = None
         # Kodi's video library: "movies", "episodes", "musicvideos" -> items with "file"
         self.library: dict[str, list[dict[str, Any]]] = {}
+        # Network.MacAddress answers in order; the last one repeats ("Busy" first, like Kodi)
+        self.mac_answers = ["Busy", "aa:bb:cc:dd:ee:ff"]
+        self.power: dict[str, bool] = {
+            "cansuspend": True,
+            "canhibernate": True,
+            "canshutdown": True,
+        }
 
     # Helpers for tests ----------------------------------------------------------
 
@@ -62,6 +69,25 @@ class FakeKodi:
 
     def _JSONRPC_Ping(self) -> str:
         return "pong"
+
+    def _XBMC_GetInfoLabels(self, labels: list[str]) -> dict[str, str]:
+        answer = self.mac_answers.pop(0) if len(self.mac_answers) > 1 else self.mac_answers[0]
+        return {label: answer if label == "Network.MacAddress" else "" for label in labels}
+
+    def _System_GetProperties(self, properties: list[str]) -> dict[str, bool]:
+        return {name: self.power.get(name, False) for name in properties}
+
+    def _System_Suspend(self) -> str:
+        return "OK"
+
+    def _System_Hibernate(self) -> str:
+        return "OK"
+
+    def _System_Shutdown(self) -> str:
+        return "OK"
+
+    def _Application_Quit(self) -> str:
+        return "OK"
 
     def _Addons_GetAddons(self, **_: Any) -> dict[str, Any]:
         return {

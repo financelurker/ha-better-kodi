@@ -8,9 +8,10 @@ Better Kodi does not replace the built-in Kodi integration. It sits on top of it
 - **The queue in the media browser**, updated live: see what's coming, jump to an item
 - **Queue services**: read the queue, remove and move items
 - **Handover**: continue the current video, with its whole queue and at the same position, on another Kodi
+- **Switch Kodi on and off** by itself: Wake on LAN, suspend, hibernate, shut down. No scripts or automations needed
 - **`call_method` with a response**: call any Kodi JSON-RPC method and use the result in your script
 
-> Kodi's **music** queue is left alone on purpose. For music, see [Better Media Player](https://github.com/financelurker/ha-better-media-player) and Music Assistant.
+> Kodi's **music** queue is left alone for now; Better Kodi only works with the video queue. For music, see [Better Media Player](https://github.com/financelurker/ha-better-media-player) and Music Assistant. If you use Kodi for music and know what a music queue in Better Kodi should do, input is always welcome: [open an issue](https://github.com/financelurker/ha-better-kodi/issues).
 
 ## Requirements
 
@@ -52,22 +53,50 @@ What happens:
 - **Assist**: if the Kodi media player was exposed to Assist, the exposure and its aliases move to Better Kodi's media player, so voice commands reach the right one. Check under **Settings → Voice assistants → Expose**; see [Exposing entities to Assist](https://www.home-assistant.io/voice_control/voice_remote_expose_devices/).
 - When you remove Better Kodi, the Kodi media player is shown again and gets its Assist settings back.
 
+### Options
+
+Under **Settings → Devices & services → Better Kodi → Configure**:
+
+| Option | Default | What it does |
+| --- | --- | --- |
+| Switch Kodi on with | Kodi automation | **Wake on LAN**: Better Kodi sends the packet itself. **Kodi automation**: runs your "Kodi turned on" automation of the Kodi device, as the Kodi integration does. |
+| MAC address of Kodi | read from Kodi | Needed for Wake on LAN. Better Kodi reads it from Kodi when you open the options while Kodi is on. |
+| Broadcast address | `255.255.255.255` | Where the Wake on LAN packet goes. Use the broadcast address of Kodi's network (such as `192.168.1.255`) if the default doesn't reach Kodi. |
+| Switch Kodi off with | Kodi automation | **Suspend**, **Hibernate**, **Shut down** or **Quit Kodi** (Kodi commands), or your "Kodi turned off" automation. |
+| Wake Kodi before sending | on | See below. |
+| Wait at most | 120 s | How long to wait for Kodi to wake up. |
+| Choices in the media browser | on | See [Play next or add to the queue from the media browser](#play-next-or-add-to-the-queue-from-the-media-browser). |
+| Link field and buttons | on | See [Paste a link](#paste-a-link-link-field-and-buttons). Off removes them. |
+| Look up titles online | on | Asks YouTube for titles and images of YouTube entries. Off: Home Assistant doesn't contact YouTube for Better Kodi. |
+
+### Switching Kodi on and off
+
+Better Kodi can switch Kodi on and off itself, so the usual Wake-on-LAN and suspend scripts plus the "Kodi turned on / off" automations are no longer needed:
+
+1. Open Better Kodi's options **while Kodi is on**. The MAC address is filled in from Kodi.
+2. Set **Switch Kodi on with** to **Wake on LAN**, and **Switch Kodi off with** to, for example, **Suspend**.
+3. Delete your old turn-on/turn-off automations and scripts, or leave them: Better Kodi no longer runs them.
+
+Needed on the Kodi device: Wake on LAN enabled (BIOS/UEFI and network adapter, often "Wake on Magic Packet"), and permission for Kodi to suspend, hibernate or shut down. Kodi reports what it may do; if it may not, Better Kodi says so instead of failing silently. Wake on LAN packets are broadcasts, so Home Assistant has to be in the same network as Kodi (with Home Assistant in Docker: host networking).
+
+Turning off the hidden Kodi media player directly still runs your automations, as before.
+
 ### Kodi suspended or off: woken up automatically
 
 If the Kodi media player is **off** when you send something (a link, a media browser item, a button, a handover to that Kodi), Better Kodi:
 
-1. switches it on, which runs your Kodi **turn-on** automation (for example Wake on LAN; set it up under the Kodi device's automations, trigger "Kodi turned on");
-2. waits until the Kodi media player is no longer off (and up to 30 seconds more until Kodi answers);
+1. switches it on, with Wake on LAN or your "Kodi turned on" automation (see above);
+2. waits until the Kodi media player is no longer off (and up to 30 seconds more until Kodi answers). Wake on LAN packets are repeated every 10 seconds meanwhile, in case one gets lost;
 3. then sends.
 
-Several links sent while Kodi wakes share one wake-up, so your automation runs only once. Without any "Kodi turned on" automation you get an error right away. The action or button keeps running meanwhile. If Kodi isn't awake within the time limit, you get an error and the link stays in the Link field. Turn this off or change the limit (default 120 seconds) under **Settings → Devices & services → Better Kodi → Configure**.
+If Kodi is on, everything is sent right away. Several links sent while Kodi wakes share one wake-up, so an automation runs only once. With the automation setting and no "Kodi turned on" automation you get an error right away. If Kodi isn't awake within the time limit, you get an error and the link stays in the Link field.
 
 ### Good to know
 
 - Better Kodi starts even when Kodi (or the TV) is off, so you can switch it on through Better Kodi's media player.
 - If Kodi's password changes, Home Assistant asks you to log in again (**Settings → Devices & services**).
 - Both media players have the same name. Better Kodi's gets an entity ID ending in `_2` (for example `media_player.living_room_kodi_2`). Rename it under the entity's settings if you like.
-- Point dashboards, automations and scripts to Better Kodi's media player. Your existing automations on the Kodi device's **turned on / turned off** triggers keep working, because Better Kodi forwards power commands to the Kodi media player.
+- Point dashboards, automations and scripts to Better Kodi's media player. With the default power settings, your existing automations on the Kodi device's **turned on / turned off** triggers keep working, because Better Kodi forwards power commands to the Kodi media player.
 - On the device page, Kodi is shown as the device's integration and Better Kodi's media player is listed among its entities. Since Home Assistant 2026.10 a device belongs to a single integration, so Better Kodi isn't listed there separately.
 
 ## Usage
@@ -110,6 +139,8 @@ entities:
 
 The field holds up to 255 characters, the longest value Home Assistant can store. For longer links use `media_player.play_media` directly.
 
+Don't need them? Switch off **Link field and buttons** in the options.
+
 ### Play next or add to the queue from the media browser
 
 Home Assistant's media browser itself has no "play next" or "add to queue" option. Better Kodi adds one:
@@ -120,6 +151,8 @@ Home Assistant's media browser itself has no "play next" or "add to queue" optio
 Folders such as shows and seasons, and items that can't be queued (TV channels), behave as before.
 
 Good to know: media picked this way in the media selector of an automation or script stores a Better Kodi ID (`better_kodi://…`), which only Better Kodi's media player understands. Dashboard cards that browse media through Better Kodi's media player see the same choices.
+
+Prefer the media browser as with other players (a click plays right away)? Switch off **Choices in the media browser** in the options.
 
 ### Share from your Android phone
 
@@ -147,11 +180,17 @@ Which field holds the link depends on the app you share from (`url` or `text`). 
 
 The media browser of Better Kodi's media player shows a **Queue** folder at the top, next to the Kodi library. The playing item is marked with ▶; select an item to jump to it.
 
-Entries get their titles even when another app (Cast Kodi, Yatse) queued them: Kodi only knows unplayed add-on items by their path ("play"), so Better Kodi looks up the titles of YouTube entries and of Jellyfin stream links itself. Entries that Kodi or an add-on already named keep their name.
+Entries get their titles even when another app (Cast Kodi, Yatse) queued them: Kodi only knows unplayed add-on items by their path ("play"), so Better Kodi looks up the titles of YouTube entries (unless **Look up titles online** is off) and of Jellyfin stream links itself. Entries that Kodi or an add-on already named keep their name.
 
-### Jellyfin items from Home Assistant's media browser
+The entity also has the attributes `queue_position` and `queue_length`.
 
-Home Assistant's Jellyfin integration hands players a plain stream link, which Kodi (and so Cast Kodi) names "stream". Better Kodi reads the item from Jellyfin and queues, in this order:
+### Media from Home Assistant's media browser: media-source backends
+
+Integrations such as Jellyfin hand players a plain stream link. Kodi (and so Cast Kodi) names it "stream", and playback isn't reported back to the media server. A **media-source backend** teaches Better Kodi about the items of one such integration. So far there is one, for Jellyfin; for other integrations the stream link is queued as is.
+
+#### Jellyfin
+
+Better Kodi reads the item from Jellyfin and queues, in this order:
 
 1. **The item from Kodi's own library**, if the Jellyfin for Kodi add-on synced it. Then Kodi knows title and artwork itself, and every app shows them.
 2. **Jellyfin for Kodi's play path**, if the add-on is installed but the item isn't synced. Playback is then reported to Jellyfin (watched state, resume).
@@ -159,7 +198,17 @@ Home Assistant's Jellyfin integration hands players a plain stream link, which K
 
 Better Kodi's own queue shows the title in every case. In the 2nd and 3rd case Kodi itself only learns the title once the item plays, so other apps show it as "stream" or similar until then.
 
-The entity also has the attributes `queue_position` and `queue_length`.
+#### Adding a backend (Plex, Emby, …)
+
+Backends are an extension point; contributions are welcome. A backend is a class in `custom_components/better_kodi/backends/` that implements `MediaSourceBackend` from [`backends/base.py`](custom_components/better_kodi/backends/base.py):
+
+| Method | Does |
+| --- | --- |
+| `recognizes(url)` | Says, without network calls, whether a stream link belongs to this media server. |
+| `async_kodi_item(context, url)` | Returns the Kodi item to queue: a Kodi library item (`{"movieid": 7}`), a Kodi add-on path, or the link, plus title and image for the queue. `None` queues the link as is. |
+| `async_title(context, file)` | Optional: title and image of a queue entry with such a link, for entries other apps queued. |
+
+`context` gives the backend a web session, the Kodi connection and the list of installed Kodi add-ons. List an instance in `BACKENDS` in `backends/__init__.py`, and add tests (`tests/test_backend_jellyfin.py` shows how). A failing backend never breaks playing: Better Kodi then queues the link as is.
 
 ### Services
 
@@ -190,14 +239,13 @@ Handover uses file paths, so it also works when the two Kodis have separate libr
 | --- | --- | --- | --- |
 | YouTube videos, Shorts, live, `youtu.be` | YouTube add-on (`plugin.video.youtube`) | ✓ | ✓ |
 | YouTube playlists | YouTube add-on | ✓ | – |
-| Rumble videos (**not working yet**, see below) | nothing (resolved in Home Assistant) | – | – |
 | Jellyfin web links (`…/web/#/details?id=…`) | Jellyfin for Kodi (`plugin.video.jellyfin`) | ✓ | ✓ |
 | Jellyfin web links | JellyCon (`plugin.video.jellycon`) | ✓ | – |
 | Direct media URLs (`.mp4`, `.mkv`, `.m3u8`, …), Kodi paths (`smb://`, `nfs://`, `plugin://`) | nothing | ✓ | ✓ |
 | Media from Home Assistant's media browser | nothing | ✓ | ✓ |
 | Other web pages | SendToKodi (`plugin.video.sendtokodi`) | ✓ | ✓ |
 
-**Rumble is not working yet.** Links are recognized, but the result is not usable so far (the queue shows `playlist.m3u8`). Support is postponed; until then, use SendToKodi or Cast Kodi for Rumble.
+Rumble isn't supported yet (an attempt didn't produce usable streams). Rumble links go to SendToKodi if it is installed; otherwise use Cast Kodi for them.
 
 Better Kodi checks which add-ons are installed and enabled in Kodi. If a YouTube link needs the YouTube add-on and it's missing, SendToKodi is used when it is installed; otherwise you get an error that names the missing add-on. Jellyfin links always need one of the Jellyfin add-ons, because they need your Jellyfin login.
 

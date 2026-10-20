@@ -141,13 +141,25 @@
       "message": "Kodi did not wake up within {seconds} seconds ({entity_id} is still off). Check your Kodi turn-on automation (for example Wake on LAN) under the Kodi device's automations."
     },
     "no_turn_on_automation": {
-      "message": "Kodi cannot be woken: there is no automation for \"Kodi turned on\" of {entity_id}. Create one under the Kodi device's automations (for example with Wake on LAN), or turn waking off in Better Kodi's options."
+      "message": "Kodi cannot be woken: there is no automation for \"Kodi turned on\" of {entity_id}. In Better Kodi's options, switch \"Switch Kodi on with\" to Wake on LAN, or create such an automation under the Kodi device's automations, or turn waking off."
     },
     "nothing_playing": {
       "message": "Nothing is playing on this Kodi."
     },
     "wake_cancelled": {
       "message": "Waking Kodi was interrupted (Better Kodi was reloaded or Home Assistant is stopping). Please try again."
+    },
+    "wake_on_lan_timeout": {
+      "message": "Kodi did not wake up within {seconds} seconds ({entity_id} is still off). Check the MAC address and broadcast address in Better Kodi's options, and that Wake on LAN is enabled on the Kodi device (BIOS/UEFI and network adapter)."
+    },
+    "no_mac": {
+      "message": "Wake on LAN needs Kodi's MAC address. Enter it in Better Kodi's options."
+    },
+    "wake_on_lan_failed": {
+      "message": "Could not send the Wake on LAN packet: {error}"
+    },
+    "power_off_not_allowed": {
+      "message": "Kodi reports that it may not do {method} on this device. Choose another way to switch off in Better Kodi's options, or allow it on the Kodi device (for example with polkit/logind on Linux)."
     }
   },
   "services": {
@@ -221,20 +233,67 @@
         "add": "➕ Add to queue",
         "replace": "⟲ Replace queue"
       }
+    },
+    "power_on": {
+      "options": {
+        "automation": "Kodi automation (\"Kodi turned on\")",
+        "wake_on_lan": "Wake on LAN"
+      }
+    },
+    "power_off": {
+      "options": {
+        "automation": "Kodi automation (\"Kodi turned off\")",
+        "suspend": "Suspend",
+        "hibernate": "Hibernate",
+        "shutdown": "Shut down",
+        "quit": "Quit Kodi"
+      }
     }
   },
   "options": {
+    "error": {
+      "invalid_mac": "That is not a MAC address (for example AA:BB:CC:DD:EE:FF).",
+      "mac_required": "Wake on LAN needs Kodi's MAC address. Better Kodi reads it from Kodi while Kodi is on; otherwise enter it yourself.",
+      "invalid_broadcast": "Enter an IPv4 address, for example 255.255.255.255 or the broadcast address of Kodi's network (such as 192.168.1.255)."
+    },
     "step": {
       "init": {
-        "title": "Waking Kodi",
-        "description": "When Kodi is off (for example suspended) and you send something to it, Better Kodi can switch it on first and send once it is awake.",
-        "data": {
-          "wake_on_send": "Wake Kodi before sending",
-          "wake_timeout": "Wait at most"
-        },
-        "data_description": {
-          "wake_on_send": "Runs the turn-on of the Kodi media player, which starts your Kodi turn-on automation (for example Wake on LAN), and waits until the Kodi media player is no longer off.",
-          "wake_timeout": "How long to wait for Kodi to wake up before giving up."
+        "title": "Better Kodi options",
+        "sections": {
+          "power": {
+            "name": "Switching Kodi on and off",
+            "description": "Better Kodi can switch Kodi on and off itself, so you need no scripts or automations for it.",
+            "data": {
+              "power_on": "Switch Kodi on with",
+              "mac": "MAC address of Kodi",
+              "broadcast_address": "Broadcast address",
+              "power_off": "Switch Kodi off with",
+              "wake_on_send": "Wake Kodi before sending",
+              "wake_timeout": "Wait at most"
+            },
+            "data_description": {
+              "power_on": "Wake on LAN: Better Kodi sends the packet itself. Kodi automation: runs your \"Kodi turned on\" automation of the Kodi device.",
+              "mac": "Read from Kodi while it is on. Needed for Wake on LAN.",
+              "broadcast_address": "Where the Wake on LAN packet is sent. Use the broadcast address of Kodi's network (such as 192.168.1.255) if 255.255.255.255 doesn't work.",
+              "power_off": "Kodi command, or your \"Kodi turned off\" automation of the Kodi device. Suspending must be allowed on the Kodi device.",
+              "wake_on_send": "Only when the Kodi media player is off: switch Kodi on first and send once it is no longer off. When Kodi is on, everything is sent right away.",
+              "wake_timeout": "How long to wait for Kodi to wake up before giving up."
+            }
+          },
+          "features": {
+            "name": "Extras",
+            "description": "Everything is on by default; switch off what you don't need.",
+            "data": {
+              "media_browser_choices": "Choices in the media browser",
+              "link_entities": "Link field and buttons",
+              "online_lookups": "Look up titles online"
+            },
+            "data_description": {
+              "media_browser_choices": "Selecting a movie or episode opens \"Play now / Play next / Add to queue / Replace queue\". Off: it plays right away, as with other players.",
+              "link_entities": "A text field for links plus four buttons on the Kodi device. Off: they are removed.",
+              "online_lookups": "Asks YouTube for titles and images of YouTube entries in the queue. Off: Home Assistant does not contact YouTube."
+            }
+          }
         }
       }
     }

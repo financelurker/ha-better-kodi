@@ -15,7 +15,6 @@ from homeassistant.components.text import DOMAIN as TEXT_DOMAIN, SERVICE_SET_VAL
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_ENTITY_ID
 from homeassistant.core import HomeAssistant, ServiceCall, callback
-from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import entity_registry as er
 
@@ -184,18 +183,6 @@ async def test_button_wakes_kodi_and_keeps_link_on_failure(hass: HomeAssistant, 
     )
     assert kodi.files() == [FILE]
     assert events == ["turn_on", "automation", "awake"]
-
-
-async def test_options_flow(hass: HomeAssistant, kodi_source: KodiSource) -> None:
-    entry = await setup_better_kodi(hass, kodi_source)
-    result = await hass.config_entries.options.async_init(entry.entry_id)
-    assert result["type"] is FlowResultType.FORM
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {CONF_WAKE: True, CONF_WAKE_TIMEOUT: 90.0}
-    )
-    await hass.async_block_till_done()
-    assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert entry.options == {CONF_WAKE: True, CONF_WAKE_TIMEOUT: 90}
 
 
 async def test_handover_wakes_the_destination(
