@@ -167,9 +167,9 @@ Share a link from any app on your Android phone (YouTube, Brave, Chrome, …) wi
 - If the link can't be played (for example the YouTube add-on is missing, or Kodi doesn't wake up), the phone gets a notification with the reason.
 - If the shared text contains more than the link, Better Kodi picks out the first link. Shares without a link are ignored.
 
-Per Kodi, in the options under **Links shared from phones**: what a shared link does (**Play now**, **Play next**, **Add to queue**, **Replace queue**, or **Off**), **Only from these phones** (for example the bedroom Kodi only for the tablet in the bedroom; a phone listed for a Kodi goes only there, without asking), and whether errors are reported on the phone.
+Per Kodi, in the options under **Links shared from phones**: what a shared link does (**Play now**, **Play next**, **Add to queue**, **Replace queue**, or **Off**), **Only from these phones** (for example the bedroom Kodi only for the tablet in the bedroom; a phone listed for Kodis sends only to those, and without asking if it's just one), and whether errors are reported on the phone.
 
-Asking and error notifications need the phone's notifications from the Home Assistant app (`notify.mobile_app_…`). If you had built a share automation yourself (as in earlier versions of this README), delete it, or links play twice.
+Asking and error notifications need the phone's notifications from the Home Assistant app (`notify.mobile_app_…`). If several Kodis could take the link but the phone can't be asked (no notifications, or Home Assistant doesn't know the phone), the link goes to the Kodi that is playing, if exactly one is; otherwise nothing is played. YouTube playlists can only be played right away: set **Play now** if you share playlists, otherwise the phone reports that they can't be queued. If you had built a share automation yourself (as in earlier versions of this README), delete it, or links play twice.
 
 ### The queue
 

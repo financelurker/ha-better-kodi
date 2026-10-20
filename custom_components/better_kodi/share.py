@@ -74,6 +74,11 @@ def async_setup_share(hass: HomeAssistant) -> None:
     hass.bus.async_listen(ACTION_EVENT, shares.on_action)
 
 
+def _sender(event: Event) -> Any:
+    """Return the app's ID of the sending phone (Android: device_id, iOS: another key)."""
+    return event.data.get("device_id") or event.data.get("sourceDevicePermanentID")
+
+
 def link_from_share(data: dict[str, Any]) -> str | None:
     """Return the first http(s) link in a share event, else None."""
     # Imported here: media_player imports this package's __init__.
@@ -100,7 +105,7 @@ class Shares:
         """Handle a shared link."""
         if (link := link_from_share(event.data)) is None:
             return  # not a link; maybe another automation wants it
-        phone = self._phone(event.data.get("device_id"))
+        phone = self._phone(_sender(event))
         if not (candidates := self._candidates(phone)):
             _LOGGER.debug("Shared link %s: no Better Kodi takes links from this phone", link)
             return
@@ -123,11 +128,21 @@ class Shares:
             return
         token, _, entry_id = action.removeprefix(ACTION_PREFIX).partition("_")
         self._forget_old()
-        if (pending := self.pending.pop(token, None)) is None or entry_id not in pending.entry_ids:
+        pending = self.pending.get(token)
+        if pending is None or entry_id not in pending.entry_ids:
             _LOGGER.debug("Ignoring an old or unknown share choice %s", action)
             return
+        # Only the phone that was asked may answer.
+        if self._phone(_sender(event)).device_id != pending.phone.device_id:
+            _LOGGER.debug("Ignoring a share choice from another device")
+            return
+        del self.pending[token]
         entry = self.hass.config_entries.async_get_entry(entry_id)
-        if entry is None or entry.state is not ConfigEntryState.LOADED:
+        if (
+            entry is None
+            or entry.state is not ConfigEntryState.LOADED
+            or entry.options.get(CONF_SHARE_ENQUEUE, "add") == SHARE_OFF
+        ):
             return
         self.hass.async_create_background_task(
             self._async_send(entry, pending.link, pending.phone, pending.context),
@@ -140,22 +155,19 @@ class Shares:
         if not isinstance(device_id, str) or not device_id:
             return Phone(None, None)
         registry = dr.async_get(self.hass)
-        device = registry.async_get(device_id) or registry.async_get_device(
-            identifiers={(MOBILE_APP, device_id)}
+        # The app sends its registration ID, which is the device's identifier.
+        device = registry.async_get_device(identifiers={(MOBILE_APP, device_id)}) or (
+            registry.async_get(device_id)
         )
-        if device is None:
-            return Phone(None, None)
-        service = None
         entry = (
             self.hass.config_entries.async_get_entry(device.config_entry_id)
-            if device.config_entry_id
+            if device is not None and device.config_entry_id
             else None
         )
-        if (
-            entry is not None
-            and entry.domain == MOBILE_APP
-            and (name := entry.data.get("device_name"))
-        ):
+        if device is None or entry is None or entry.domain != MOBILE_APP:
+            return Phone(None, None)
+        service = None
+        if name := entry.data.get("device_name"):
             candidate = f"{MOBILE_APP}_{slugify(name)}"
             if self.hass.services.has_service("notify", candidate):
                 service = candidate
@@ -202,14 +214,18 @@ class Shares:
             )
         except HomeAssistantError as err:
             _LOGGER.warning("Shared link %s could not be sent to %s: %s", link, entry.title, err)
-            if entry.options.get(CONF_SHARE_NOTIFY, True):
-                texts = await self._texts()
-                await self._async_notify(
-                    phone,
-                    texts.get("share_failed", "{kodi}: {error}").format(
-                        kodi=entry.title, error=await self._message(err)
-                    ),
-                )
+            error = await self._message(err)
+        except Exception as err:  # the phone already said "shared"; it must hear about it
+            _LOGGER.exception("Shared link %s could not be sent to %s", link, entry.title)
+            error = str(err) or type(err).__name__
+        else:
+            return
+        if entry.options.get(CONF_SHARE_NOTIFY, True):
+            texts = await self._texts()
+            await self._async_notify(
+                phone,
+                texts.get("share_failed", "{kodi}: {error}").format(kodi=entry.title, error=error),
+            )
 
     async def _async_ask(
         self,
@@ -223,6 +239,11 @@ class Shares:
         title = subject.strip() if isinstance(subject, str) and subject.strip() else link
         if phone.notify_service is None:
             # No way to ask on the phone (unknown phone, or no notifications).
+            # Unambiguous after all if exactly one of them is playing.
+            playing = [e for e in candidates if self._rank(e)[0] == 0]
+            if len(playing) == 1:
+                await self._async_send(playing[0], link, phone, context)
+                return
             _LOGGER.warning(
                 "Shared link %s: several Kodis could take it (%s), but the phone can't be "
                 "asked. Limit sharing to certain phones in Better Kodi's options",
@@ -232,7 +253,9 @@ class Shares:
             return
         self._forget_old()
         choices = candidates[:MAX_BUTTONS]
-        token = secrets.token_hex(4)
+        if len(candidates) > MAX_BUTTONS:
+            _LOGGER.debug("Shared link %s: only the first %s Kodis are offered", link, MAX_BUTTONS)
+        token = secrets.token_hex(8)
         self.pending[token] = PendingShare(
             link, phone, tuple(entry.entry_id for entry in choices), time.monotonic(), context
         )
