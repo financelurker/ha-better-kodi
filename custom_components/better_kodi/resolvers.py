@@ -14,7 +14,7 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 
 import aiohttp
 
-from .jellyfin import ADDON_JELLYFIN, addon_path, async_get_item, parse_stream_url
+from .backends.jellyfin import ADDON_JELLYFIN, addon_path
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -48,11 +48,6 @@ YOUTUBE_HOSTS = frozenset(
 YOUTUBE_ID = re.compile(r"^[A-Za-z0-9_-]{11}$")
 YOUTUBE_PATH_ID = re.compile(r"^/(?:shorts|live|embed|v)/([A-Za-z0-9_-]{11})(?:[/?]|$)")
 YOUTUBE_OEMBED = "https://www.youtube.com/oembed"
-
-RUMBLE_HOSTS = frozenset({"rumble.com", "www.rumble.com"})
-RUMBLE_EMBED_PATH = re.compile(r"^/embed/(?:[0-9a-z]+\.)?([0-9a-z]+)/?$")
-RUMBLE_EMBED_IN_PAGE = re.compile(r"rumble\.com/embed/(?:[0-9a-z]+\.)?([0-9a-z]+)")
-RUMBLE_API = "https://rumble.com/embedJS/u3/"
 
 JELLYFIN_ID = re.compile(r"^[0-9a-f]{32}$")
 
@@ -88,6 +83,8 @@ class ResolveContext:
 
     session: aiohttp.ClientSession
     addons: frozenset[str]
+    # Ask YouTube for titles and images (option "Look up titles online").
+    online_lookups: bool = True
 
 
 type Resolver = Callable[[str, ResolveContext], Awaitable[ResolvedMedia | None]]
@@ -146,7 +143,11 @@ async def resolve_youtube(url: str, context: ResolveContext) -> ResolvedMedia | 
             resolver="youtube",
             queueable=False,
         )
-    title, thumbnail = await _youtube_oembed(context.session, youtube_id)
+    title, thumbnail = (
+        await _youtube_oembed(context.session, youtube_id)
+        if context.online_lookups
+        else (None, None)
+    )
     return ResolvedMedia(
         item={"file": f"plugin://{ADDON_YOUTUBE}/play/?video_id={youtube_id}"},
         resolver="youtube",
@@ -180,92 +181,6 @@ async def _youtube_oembed(
     if not isinstance(data, dict):
         return None, None
     return data.get("title"), data.get("thumbnail_url")
-
-
-# --- Rumble ------------------------------------------------------------------
-
-
-async def resolve_rumble(url: str, context: ResolveContext) -> ResolvedMedia | None:
-    """Resolve Rumble videos to a direct video URL, like Cast Kodi does."""
-    parts = urlsplit(url)
-    if (parts.hostname or "").lower() not in RUMBLE_HOSTS:
-        return None
-    if match := RUMBLE_EMBED_PATH.match(parts.path):
-        embed_id = match.group(1)
-    elif parts.path.startswith("/v") and parts.path.endswith(".html"):
-        embed_id = await _rumble_embed_id_from_page(context.session, url)
-    else:
-        return None
-    video = await _rumble_video(context.session, embed_id)
-    if (stream := pick_rumble_stream(video)) is None:
-        raise ResolveError(f"no playable stream for Rumble video {embed_id}")
-    return ResolvedMedia(
-        item={"file": stream},
-        resolver="rumble",
-        title=video.get("title") or None,
-        thumbnail=video.get("i") or None,
-    )
-
-
-async def _rumble_embed_id_from_page(session: aiohttp.ClientSession, url: str) -> str:
-    """Find the embed ID on a Rumble video page."""
-    try:
-        async with session.get(url, timeout=HTTP_TIMEOUT) as response:
-            response.raise_for_status()
-            page = await response.text()
-    except (aiohttp.ClientError, TimeoutError) as err:
-        raise ResolveError(f"could not load {url}: {err}") from err
-    if (match := RUMBLE_EMBED_IN_PAGE.search(page)) is None:
-        raise ResolveError(f"no embed ID found on {url}")
-    return match.group(1)
-
-
-async def _rumble_video(session: aiohttp.ClientSession, embed_id: str) -> dict[str, Any]:
-    """Load the video description from Rumble's embed API."""
-    try:
-        async with session.get(
-            RUMBLE_API,
-            params={"request": "video", "ver": 2, "v": embed_id},
-            timeout=HTTP_TIMEOUT,
-        ) as response:
-            response.raise_for_status()
-            video = await response.json(content_type=None)
-    except (aiohttp.ClientError, TimeoutError, ValueError) as err:
-        raise ResolveError(f"Rumble API failed for {embed_id}: {err}") from err
-    if not isinstance(video, dict):
-        raise ResolveError(f"Rumble video {embed_id} not found")
-    return video
-
-
-def pick_rumble_stream(video: dict[str, Any]) -> str | None:
-    """Pick the best stream: HLS for live streams, else the highest MP4."""
-    streams: dict[str, list[tuple[int, str]]] = {}
-    for kind, entries in (video.get("ua") or {}).items():
-        if isinstance(entries, dict):
-            pairs = list(entries.items())
-        elif isinstance(entries, list):
-            pairs = [(None, entry) for entry in entries]
-        else:
-            continue
-        for height_key, entry in pairs:
-            if not isinstance(entry, dict) or not entry.get("url"):
-                continue
-            meta = entry.get("meta") or {}
-            height = _as_int(meta.get("h")) or _as_int(height_key) or 0
-            streams.setdefault(kind, []).append((height, entry["url"]))
-
-    order = ("hls", "mp4", "webm") if video.get("live") == 2 else ("mp4", "hls", "webm")
-    for kind in order:
-        if candidates := streams.get(kind):
-            return max(candidates)[1]
-    return None
-
-
-def _as_int(value: Any) -> int | None:
-    try:
-        return int(value)
-    except TypeError, ValueError:
-        return None
 
 
 # --- Jellyfin ----------------------------------------------------------------
@@ -339,7 +254,6 @@ def _sendtokodi(url: str) -> ResolvedMedia:
 
 RESOLVERS: tuple[Resolver, ...] = (
     resolve_youtube,
-    resolve_rumble,
     resolve_jellyfin,
     resolve_direct,
     resolve_sendtokodi,
@@ -390,14 +304,10 @@ def youtube_thumbnail(file: str | None) -> str | None:
     return None
 
 
-async def async_lookup_title(
+async def async_youtube_title(
     session: aiohttp.ClientSession, file: str
 ) -> tuple[str | None, str | None] | None:
-    """Return title and thumbnail for a queue entry, or None if unknown."""
-    if (stream := parse_stream_url(file)) is not None:
-        if (item := await async_get_item(session, stream)) is None:
-            return None
-        return item.title, item.thumbnail
+    """Return title and thumbnail of a YouTube queue entry, or None if unknown."""
     if (youtube := youtube_from_kodi_path(file)) is None:
         return None
     kind, youtube_id = youtube

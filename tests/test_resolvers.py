@@ -8,15 +8,13 @@ from custom_components.better_kodi.resolvers import (
     ADDON_JELLYFIN,
     ADDON_SENDTOKODI,
     ADDON_YOUTUBE,
-    RUMBLE_API,
     YOUTUBE_OEMBED,
     ResolveContext,
     ResolveError,
-    async_lookup_title,
     async_resolve,
+    async_youtube_title,
     parse_jellyfin_item_id,
     parse_youtube,
-    pick_rumble_stream,
     strip_kodi_markup,
     youtube_from_kodi_path,
 )
@@ -101,70 +99,25 @@ async def test_youtube_without_addon_falls_back_to_sendtokodi(hass: HomeAssistan
     assert result.item == {"file": f"plugin://plugin.video.sendtokodi/?{url}"}
 
 
-RUMBLE_VIDEO = {
-    "title": "A Rumble video",
-    "i": "https://sp.rmbl.ws/thumb.jpg",
-    "live": 0,
-    "ua": {
-        "mp4": {
-            "360": {"url": "https://rumble.cloud/v360.mp4", "meta": {"h": 360}},
-            "1080": {"url": "https://rumble.cloud/v1080.mp4", "meta": {"h": 1080}},
-            "720": {"url": "https://rumble.cloud/v720.mp4", "meta": {"h": 720}},
-        },
-        "hls": {"auto": {"url": "https://rumble.cloud/v.m3u8", "meta": {}}},
-        "tar": {"720": {"url": "https://rumble.cloud/v.tar"}},
-    },
-}
-
-
-async def test_rumble_page(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> None:
+async def test_rumble_is_not_resolved(hass: HomeAssistant) -> None:
+    """Rumble support was removed until it works; its links are passed on unchanged."""
     page = "https://rumble.com/v6abcd-some-title.html"
-    aioclient_mock.get(
-        page,
-        text='<script type="application/ld+json">{"embedUrl":"https://rumble.com/embed/v5xyz12/"}</script>',
-    )
-    aioclient_mock.get(RUMBLE_API, json=RUMBLE_VIDEO)
     result = await async_resolve(page, context(hass))
-    assert result.item == {"file": "https://rumble.cloud/v1080.mp4"}
-    assert result.title == "A Rumble video"
-    assert result.resolver == "rumble"
-    api_call = aioclient_mock.mock_calls[-1]
-    assert dict(api_call[1].query) == {"request": "video", "ver": "2", "v": "v5xyz12"}
+    assert result.resolver == "passthrough"
 
 
-async def test_rumble_embed_link(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> None:
-    aioclient_mock.get(RUMBLE_API, json=RUMBLE_VIDEO)
-    result = await async_resolve("https://rumble.com/embed/v5xyz12/", context(hass))
-    assert result.file == "https://rumble.cloud/v1080.mp4"
-
-
-async def test_rumble_page_without_embed(
+async def test_youtube_without_online_lookups(
     hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
 ) -> None:
-    page = "https://rumble.com/v6abcd-some-title.html"
-    aioclient_mock.get(page, text="<html>nothing here</html>")
-    with pytest.raises(ResolveError, match="no embed ID"):
-        await async_resolve(page, context(hass))
-
-
-def test_rumble_live_prefers_hls() -> None:
-    assert pick_rumble_stream({**RUMBLE_VIDEO, "live": 2}) == "https://rumble.cloud/v.m3u8"
-
-
-def test_rumble_list_shaped_formats() -> None:
-    video = {
-        "ua": {
-            "mp4": [
-                {"url": "https://a/480.mp4", "meta": {"h": 480}},
-                {"url": "https://a/720.mp4", "meta": {"h": 720}},
-            ]
-        }
-    }
-    assert pick_rumble_stream(video) == "https://a/720.mp4"
-
-
-def test_rumble_without_streams() -> None:
-    assert pick_rumble_stream({"ua": {"tar": {"720": {"url": "x"}}}}) is None
+    ctx = ResolveContext(
+        session=async_get_clientsession(hass),
+        addons=frozenset({ADDON_YOUTUBE}),
+        online_lookups=False,
+    )
+    result = await async_resolve(f"https://youtu.be/{VIDEO_ID}", ctx)
+    assert result.file == f"plugin://plugin.video.youtube/play/?video_id={VIDEO_ID}"
+    assert result.title is None
+    assert aioclient_mock.call_count == 0
 
 
 @pytest.mark.parametrize(
@@ -275,11 +228,11 @@ async def test_lookup_title(hass: HomeAssistant, aioclient_mock: AiohttpClientMo
     aioclient_mock.get(YOUTUBE_OEMBED, json={"title": "Queued by Cast Kodi", "thumbnail_url": "t"})
     session = async_get_clientsession(hass)
     file = f"plugin://plugin.video.youtube/play/?video_id={VIDEO_ID}&incognito=false"
-    assert await async_lookup_title(session, file) == ("Queued by Cast Kodi", "t")
+    assert await async_youtube_title(session, file) == ("Queued by Cast Kodi", "t")
     assert dict(aioclient_mock.mock_calls[0][1].query)["url"] == (
         f"https://www.youtube.com/watch?v={VIDEO_ID}"
     )
-    assert await async_lookup_title(session, "smb://nas/film.mkv") is None
+    assert await async_youtube_title(session, "smb://nas/film.mkv") is None
 
 
 @pytest.mark.parametrize(

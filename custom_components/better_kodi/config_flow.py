@@ -1,6 +1,9 @@
 """Config flow for Better Kodi."""
 
-from collections.abc import Mapping
+import asyncio
+from collections.abc import Iterable, Mapping
+import contextlib
+import ipaddress
 from typing import Any
 
 import probatio
@@ -17,26 +20,43 @@ from homeassistant.const import (
     CONF_PORT,
     CONF_SSL,
     CONF_USERNAME,
+    STATE_OFF,
+    STATE_UNAVAILABLE,
 )
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.data_entry_flow import section
 from homeassistant.helpers import entity_registry as er, selector
 
 from . import client_from_entry_data
 from .const import (
+    CONF_BROADCAST,
+    CONF_BROWSE_CHOICES,
     CONF_HIDE_SOURCE,
+    CONF_LINK_ENTITIES,
+    CONF_MAC,
+    CONF_ONLINE_LOOKUPS,
+    CONF_POWER_OFF,
+    CONF_POWER_ON,
     CONF_SOURCE_ENTITY_ID,
     CONF_SOURCE_ENTITY_UUID,
     CONF_WAKE,
     CONF_WAKE_TIMEOUT,
     CONF_WS_PORT,
+    DEFAULT_OPTIONS,
     DEFAULT_PORT,
-    DEFAULT_WAKE_TIMEOUT,
     DEFAULT_WS_PORT,
     DOMAIN,
     KODI_DOMAIN,
+    POWER_OFF_METHODS,
+    POWER_ON_MODES,
+    POWER_ON_WAKE_ON_LAN,
 )
 from .kodi_client import KodiAuthError, KodiError
+from .power import async_read_mac, normalize_mac
 
+SECTION_POWER = "power"
+SECTION_FEATURES = "features"
+MAC_DETECT_TIMEOUT = 5
 CONNECTION_KEYS = (CONF_HOST, CONF_PORT, CONF_WS_PORT, CONF_USERNAME, CONF_PASSWORD, CONF_SSL)
 
 
@@ -272,37 +292,115 @@ class BetterKodiConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 class BetterKodiOptionsFlow(OptionsFlowWithReload):
-    """Options: waking Kodi before sending something to it."""
+    """Options: switching Kodi on and off, and which extras Better Kodi offers."""
+
+    def __init__(self) -> None:
+        """Initialize the flow."""
+        self._detected_mac: str | None = None
+        self._detected = False
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Show the options."""
+        errors: dict[str, str] = {}
+        values = {**DEFAULT_OPTIONS, **self.config_entry.options}
         if user_input is not None:
-            return self.async_create_entry(
-                data={
-                    CONF_WAKE: user_input[CONF_WAKE],
-                    CONF_WAKE_TIMEOUT: int(user_input[CONF_WAKE_TIMEOUT]),
-                }
-            )
-        options = self.config_entry.options
+            power = user_input.get(SECTION_POWER, {})
+            values = {**values, **power, **user_input.get(SECTION_FEATURES, {})}
+            mac_text = (power.get(CONF_MAC) or "").strip()  # an emptied field is left out
+            mac = normalize_mac(mac_text)
+            values[CONF_MAC] = mac or mac_text
+            if mac_text and mac is None:
+                errors["base"] = "invalid_mac"
+            elif values[CONF_POWER_ON] == POWER_ON_WAKE_ON_LAN and mac is None:
+                errors["base"] = "mac_required"
+            values[CONF_BROADCAST] = (values.get(CONF_BROADCAST) or "").strip()
+            if not errors and not _is_ipv4(values[CONF_BROADCAST]):
+                errors["base"] = "invalid_broadcast"
+            if not errors:
+                values[CONF_WAKE_TIMEOUT] = int(values[CONF_WAKE_TIMEOUT])
+                return self.async_create_entry(data={key: values[key] for key in DEFAULT_OPTIONS})
+        elif not values[CONF_MAC]:
+            values[CONF_MAC] = await self._async_detect_mac() or ""
+
         return self.async_show_form(
             step_id="init",
-            data_schema=probatio.Schema(
-                {
-                    probatio.Required(
-                        CONF_WAKE, default=options.get(CONF_WAKE, True)
-                    ): selector.BooleanSelector(),
-                    probatio.Required(
-                        CONF_WAKE_TIMEOUT,
-                        default=options.get(CONF_WAKE_TIMEOUT, DEFAULT_WAKE_TIMEOUT),
-                    ): selector.NumberSelector(
-                        selector.NumberSelectorConfig(
-                            min=10,
-                            max=900,
-                            step=5,
-                            unit_of_measurement="s",
-                            mode=selector.NumberSelectorMode.BOX,
-                        )
-                    ),
-                }
-            ),
+            data_schema=self._schema(values),
+            errors=errors,
         )
+
+    async def _async_detect_mac(self) -> str | None:
+        """Ask Kodi for its MAC address once, if it is running."""
+        if not self._detected:
+            self._detected = True
+            source_entity_id = er.async_resolve_entity_id(
+                er.async_get(self.hass), self.config_entry.data[CONF_SOURCE_ENTITY_UUID]
+            )
+            source = self.hass.states.get(source_entity_id) if source_entity_id else None
+            if source is None or source.state in (STATE_OFF, STATE_UNAVAILABLE):
+                return None  # a suspended Kodi wouldn't answer; don't make the form wait
+            client = client_from_entry_data(self.hass, dict(self.config_entry.data))
+            with contextlib.suppress(TimeoutError):
+                async with asyncio.timeout(MAC_DETECT_TIMEOUT):
+                    self._detected_mac = await async_read_mac(client)
+        return self._detected_mac
+
+    @staticmethod
+    def _schema(values: dict[str, Any]) -> probatio.Schema:
+        def choice(key: str, modes: Iterable[str]) -> selector.SelectSelector:
+            return selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=list(modes),
+                    translation_key=key,
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                )
+            )
+
+        mac = values.get(CONF_MAC)
+        power = probatio.Schema(
+            {
+                probatio.Required(CONF_POWER_ON, default=values[CONF_POWER_ON]): choice(
+                    CONF_POWER_ON, POWER_ON_MODES
+                ),
+                probatio.Optional(
+                    CONF_MAC, **({"description": {"suggested_value": mac}} if mac else {})
+                ): selector.TextSelector(),
+                probatio.Required(
+                    CONF_BROADCAST, default=values[CONF_BROADCAST]
+                ): selector.TextSelector(),
+                probatio.Required(CONF_POWER_OFF, default=values[CONF_POWER_OFF]): choice(
+                    CONF_POWER_OFF, POWER_OFF_METHODS
+                ),
+                probatio.Required(CONF_WAKE, default=values[CONF_WAKE]): selector.BooleanSelector(),
+                probatio.Required(
+                    CONF_WAKE_TIMEOUT, default=values[CONF_WAKE_TIMEOUT]
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=10,
+                        max=900,
+                        step=5,
+                        unit_of_measurement="s",
+                        mode=selector.NumberSelectorMode.BOX,
+                    )
+                ),
+            }
+        )
+        features = probatio.Schema(
+            {
+                probatio.Required(key, default=values[key]): selector.BooleanSelector()
+                for key in (CONF_BROWSE_CHOICES, CONF_LINK_ENTITIES, CONF_ONLINE_LOOKUPS)
+            }
+        )
+        return probatio.Schema(
+            {
+                probatio.Required(SECTION_POWER): section(power),
+                probatio.Required(SECTION_FEATURES): section(features),
+            }
+        )
+
+
+def _is_ipv4(text: str) -> bool:
+    try:
+        ipaddress.IPv4Address(text.strip())
+    except ValueError:
+        return False
+    return True

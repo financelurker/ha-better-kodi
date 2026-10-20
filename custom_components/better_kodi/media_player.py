@@ -58,31 +58,33 @@ from homeassistant.helpers.event import (
 )
 from homeassistant.helpers.translation import async_get_translations
 
-from . import BetterKodiConfigEntry, BetterKodiData
+from . import BetterKodiConfigEntry, BetterKodiData, backends, get_option
 from .assist import copy_aliases, transfer_exposure
 from .const import (
     ATTR_QUEUE_LENGTH,
     ATTR_QUEUE_POSITION,
     CONF_ASSIST_MIGRATED,
+    CONF_BROADCAST,
+    CONF_BROWSE_CHOICES,
+    CONF_MAC,
+    CONF_ONLINE_LOOKUPS,
+    CONF_POWER_OFF,
+    CONF_POWER_ON,
     CONF_WAKE,
     CONF_WAKE_TIMEOUT,
-    DEFAULT_WAKE_TIMEOUT,
     DOMAIN,
     LIBRARY_ID_KEYS,
+    POWER_OFF_METHODS,
+    POWER_ON_WAKE_ON_LAN,
     QUEUE_CONTENT_ID,
     QUEUE_CONTENT_TYPE,
     QUEUE_ITEM_CONTENT_TYPE,
     QUEUE_ITEM_PREFIX,
     READY_TIMEOUT,
-)
-from .jellyfin import (
-    ADDON_JELLYFIN,
-    addon_path,
-    async_find_in_kodi_library,
-    async_get_item,
-    parse_stream_url,
+    WAKE_ON_LAN_REPEAT,
 )
 from .kodi_client import KodiError, KodiRpcError
+from .power import PowerOffNotAllowed, async_power_off, async_send_magic_packet
 from .queue import EnqueueMode, HandoverSnapshot, QueueError, QueueStatus
 from .resolvers import (
     KODI_PATH_SCHEMES,
@@ -345,13 +347,45 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
             context=self._context,
         )
 
+    @property
+    def _wake_on_lan(self) -> bool:
+        return get_option(self._entry, CONF_POWER_ON) == POWER_ON_WAKE_ON_LAN
+
     async def async_turn_on(self) -> None:
-        """Turn Kodi on (runs your Kodi turn-on automation)."""
-        await self._forward(SERVICE_TURN_ON)
+        """Turn Kodi on: Wake on LAN, or the Kodi integration's turn-on automation."""
+        if self._wake_on_lan:
+            await self._async_send_wake_on_lan()
+        else:
+            await self._forward(SERVICE_TURN_ON)
 
     async def async_turn_off(self) -> None:
-        """Turn Kodi off (runs your Kodi turn-off automation)."""
-        await self._forward(SERVICE_TURN_OFF)
+        """Turn Kodi off with the chosen Kodi command, or the turn-off automation."""
+        mode = get_option(self._entry, CONF_POWER_OFF)
+        if (method := POWER_OFF_METHODS.get(mode)) is None:
+            await self._forward(SERVICE_TURN_OFF)
+            return
+        if self.state == MediaPlayerState.OFF:
+            return  # already off; Kodi wouldn't answer
+        try:
+            await self._run(async_power_off(self._data.client, method))
+        except PowerOffNotAllowed as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="power_off_not_allowed",
+            ) from err
+
+    async def _async_send_wake_on_lan(self) -> None:
+        mac = get_option(self._entry, CONF_MAC)
+        if not mac:
+            raise ServiceValidationError(translation_domain=DOMAIN, translation_key="no_mac")
+        try:
+            await async_send_magic_packet(self.hass, mac, get_option(self._entry, CONF_BROADCAST))
+        except (OSError, ValueError) as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="wake_on_lan_failed",
+                translation_placeholders={"error": str(err)},
+            ) from err
 
     async def async_volume_up(self) -> None:
         """Raise the volume."""
@@ -481,27 +515,20 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
         )
 
     async def _async_media_source_item(self, url: str) -> dict[str, Any]:
-        """Return the best Kodi item for a resolved media source URL."""
-        if (stream := parse_stream_url(url)) is None:
-            return {"file": url}
-        if (jellyfin_item := await async_get_item(self._data.web_session, stream)) is None:
-            return {"file": url}
-        if library_item := await async_find_in_kodi_library(self._data.client, jellyfin_item):
-            return library_item  # Kodi knows title and artwork itself
-        if ADDON_JELLYFIN in await self._data.async_get_addons():
-            file = addon_path(jellyfin_item.item_id)
-        else:
-            file = url
-        self._data.queue.known.remember(file, jellyfin_item.title, jellyfin_item.thumbnail)
-        return {"file": file}
+        """Return the best Kodi item for a resolved media source URL (see backends)."""
+        found = await backends.async_kodi_item(self._data.backend_context, url)
+        if (file := found.item.get("file")) and (found.title or found.thumbnail):
+            self._data.queue.known.remember(file, found.title, found.thumbnail)
+        return found.item
 
     async def _async_wake_kodi(self) -> None:
         """Wake Kodi first if it is off (suspended), then wait until it answers.
 
-        "Turn on" runs the user's Kodi turn-on automation (for example Wake on
-        LAN). Kodi counts as awake once the Kodi entity is no longer "off".
-        Calls that arrive during a wake wait for that same wake, so the
-        automation runs once (a power toggle would otherwise switch off again).
+        Better Kodi sends Wake on LAN packets itself, or "turn on" runs the
+        user's Kodi turn-on automation. Kodi counts as awake once the Kodi
+        entity is no longer "off". Calls that arrive during a wake wait for
+        that same wake, so the automation runs once (a power toggle would
+        otherwise switch off again).
         """
         # Kept per Kodi entity outside the config entry, so that a reload (for
         # example after changing options) doesn't start a second wake. As a
@@ -509,9 +536,12 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
         wakes: dict[str, asyncio.Task[None]] = self.hass.data.setdefault(WAKE_TASKS, {})
         running = wakes.get(self._source_entity_id)
         if running is None or running.done():
-            options = self._entry.options
             source = self.hass.states.get(self._source_entity_id)
-            if not options.get(CONF_WAKE, True) or source is None or source.state != STATE_OFF:
+            if (
+                not get_option(self._entry, CONF_WAKE)
+                or source is None
+                or source.state != STATE_OFF
+            ):
                 return
             running = wakes[self._source_entity_id] = self.hass.async_create_background_task(
                 self._async_wake(), f"{DOMAIN} wake {self._source_entity_id}"
@@ -527,7 +557,8 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
             ) from None
 
     async def _async_wake(self) -> None:
-        if not self.hass.bus.async_listeners().get(KODI_EVENT_TURN_ON):
+        wake_on_lan = self._wake_on_lan
+        if not wake_on_lan and not self.hass.bus.async_listeners().get(KODI_EVENT_TURN_ON):
             # The Kodi integration's "turn on" only fires this event; without an
             # automation listening, nothing would ever wake Kodi.
             raise HomeAssistantError(
@@ -535,7 +566,7 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
                 translation_key="no_turn_on_automation",
                 translation_placeholders={"entity_id": self._source_entity_id},
             )
-        timeout = self._entry.options.get(CONF_WAKE_TIMEOUT, DEFAULT_WAKE_TIMEOUT)
+        timeout = get_option(self._entry, CONF_WAKE_TIMEOUT)
         awake = asyncio.Event()
 
         @callback
@@ -547,13 +578,26 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
         unsubscribe = async_track_state_change_event(self.hass, [self._source_entity_id], on_change)
         try:
             _LOGGER.debug("%s is off; waking it before sending", self._source_entity_id)
-            await self._forward(SERVICE_TURN_ON)
             async with asyncio.timeout(timeout):
-                await awake.wait()
+                if not wake_on_lan:
+                    await self._forward(SERVICE_TURN_ON)
+                    await awake.wait()
+                sent = 0
+                while wake_on_lan and not awake.is_set():
+                    # Packets get lost; Wake on LAN is safe to repeat (no toggle).
+                    try:
+                        await self._async_send_wake_on_lan()
+                    except HomeAssistantError:
+                        if not sent:
+                            raise
+                        _LOGGER.debug("Wake on LAN packet failed; trying again", exc_info=True)
+                    sent += 1
+                    with contextlib.suppress(TimeoutError):
+                        await asyncio.wait_for(awake.wait(), WAKE_ON_LAN_REPEAT)
         except TimeoutError as err:
             raise HomeAssistantError(
                 translation_domain=DOMAIN,
-                translation_key="wake_timeout",
+                translation_key="wake_on_lan_timeout" if wake_on_lan else "wake_timeout",
                 translation_placeholders={
                     "entity_id": self._source_entity_id,
                     "seconds": str(timeout),
@@ -581,7 +625,11 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
 
     async def _async_resolve(self, url: str) -> ResolvedMedia:
         addons = await self._data.async_get_addons()
-        context = ResolveContext(session=self._data.web_session, addons=addons)
+        context = ResolveContext(
+            session=self._data.web_session,
+            addons=addons,
+            online_lookups=bool(get_option(self._entry, CONF_ONLINE_LOOKUPS)),
+        )
         try:
             return await async_resolve(url, context)
         except ResolveError as err:
@@ -740,7 +788,10 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
         if payload is None:
             raise BrowseError(f"Kodi returned nothing for {media_content_id}")
         result = browse_media_from(payload)
-        result.children = [self._offer_choices(child) for child in result.children or []] or None
+        if get_option(self._entry, CONF_BROWSE_CHOICES):
+            result.children = [
+                self._offer_choices(child) for child in result.children or []
+            ] or None
         if media_content_type in (None, "library") and media_content_id in (None, "", "library"):
             result.children = [
                 await self._async_browse_queue(as_child=True),
