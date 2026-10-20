@@ -15,6 +15,7 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 import aiohttp
 
 from .backends.jellyfin import ADDON_JELLYFIN, addon_path
+from .redact import redact_url
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -98,7 +99,7 @@ async def async_resolve(url: str, context: ResolveContext) -> ResolvedMedia:
             if (result := await resolver(url, context)) is not None:
                 return result
         except ResolveError as err:
-            _LOGGER.debug("%s could not resolve %s: %s", resolver.__name__, url, err)
+            _LOGGER.debug("%s could not resolve %s: %s", resolver.__name__, redact_url(url), err)
             if err.fallback and ADDON_SENDTOKODI in context.addons:
                 return _sendtokodi(url)
             raise

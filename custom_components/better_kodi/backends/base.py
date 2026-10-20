@@ -58,7 +58,7 @@ class MediaSourceBackend(ABC):
 
     @abstractmethod
     async def async_kodi_item(self, context: BackendContext, url: str) -> BackendItem | None:
-        """Return the Kodi item for a recognized URL, or None to queue the URL as is.
+        """Return the Kodi item for a recognized URL, or None if there is nothing better.
 
         Errors must not escape: return None instead (and log at debug level).
         """

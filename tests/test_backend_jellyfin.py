@@ -254,3 +254,133 @@ async def test_media_browser_item_as_stream(
         "better_kodi", "get_queue", {ATTR_ENTITY_ID: player}, blocking=True, return_response=True
     )
     assert [entry["title"] for entry in queue[player]["items"]] == ["The Show – S01E02 – Pilot"] * 2
+
+
+DOWNLOAD = f"{SERVER}/Items/{JF_ID}/Download?api_key=KEY"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        DOWNLOAD,
+        f"{SERVER}/Items/01234567-89ab-cdef-0123-456789abcdef/Download?api_key=KEY",
+        f"{SERVER}/Videos/{JF_ID}/master.m3u8?ApiKey=KEY",
+    ],
+)
+def test_parse_download_and_hls_links(url: str) -> None:
+    assert parse_stream_url(url) == JellyfinStream(SERVER, JF_ID, "KEY")
+
+
+async def share_link(hass: HomeAssistant, player: str, url: str) -> None:
+    await hass.services.async_call(
+        MP_DOMAIN,
+        "play_media",
+        {
+            ATTR_ENTITY_ID: player,
+            ATTR_MEDIA_CONTENT_ID: url,
+            ATTR_MEDIA_CONTENT_TYPE: "url",
+            "enqueue": "add",
+        },
+        blocking=True,
+    )
+
+
+async def test_copied_stream_link_plays_the_library_item(
+    hass: HomeAssistant, setup: tuple[str, FakeKodi]
+) -> None:
+    """A link from Jellyfin's "Copy stream URL", shared from the phone."""
+    player, kodi = setup
+    kodi.library["episodes"] = [
+        {
+            "episodeid": 7,
+            "file": f"plugin://plugin.video.jellyfin/lib/?filename=a.mkv&id={JF_ID}&dbid=7&mode=play",
+        }
+    ]
+    await share_link(hass, player, DOWNLOAD)
+    assert kodi.playlist[0]["id"] == 7
+    assert kodi.playlist[0]["type"] == "episode"
+
+
+async def test_copied_stream_link_through_addon(
+    hass: HomeAssistant, setup: tuple[str, FakeKodi]
+) -> None:
+    player, kodi = setup
+    kodi.addons = {"plugin.video.jellyfin"}
+    await hass.config_entries.async_entries("better_kodi")[0].runtime_data.async_get_addons(
+        force=True
+    )
+    await share_link(hass, player, DOWNLOAD)
+    assert kodi.files() == [f"plugin://plugin.video.jellyfin/?mode=play&id={JF_ID}"]
+    queue = await hass.services.async_call(
+        "better_kodi", "get_queue", {ATTR_ENTITY_ID: player}, blocking=True, return_response=True
+    )
+    assert queue[player]["items"][0]["title"] == "The Show – S01E02 – Pilot"
+
+
+async def test_download_entry_queued_elsewhere_gets_its_title(
+    hass: HomeAssistant, setup: tuple[str, FakeKodi]
+) -> None:
+    player, kodi = setup
+    kodi.playlist.append({"file": DOWNLOAD, "label": "Download"})
+    queue = await hass.services.async_call(
+        "better_kodi", "get_queue", {ATTR_ENTITY_ID: player}, blocking=True, return_response=True
+    )
+    assert queue[player]["items"][0]["title"] == "The Show – S01E02 – Pilot"
+
+
+async def test_copied_link_without_jellyfin_answer_uses_the_addon(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    kodi_source: KodiSource,
+    fakes: dict[str, FakeKodi],
+) -> None:
+    """Home Assistant can't reach jellyfin.local (or the key is refused): the ID is enough."""
+    aioclient_mock.get(f"{SERVER}/Items", status=401)
+    kodi = fakes[kodi_source.host]
+    kodi.addons = {"plugin.video.jellyfin"}
+    entry = await setup_better_kodi(hass, kodi_source)
+    await share_link(hass, own_entity_id(hass, entry), DOWNLOAD)
+    assert kodi.files() == [f"plugin://plugin.video.jellyfin/?mode=play&id={JF_ID}"]
+
+
+async def test_copied_link_without_jellyfin_answer_uses_the_library(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    kodi_source: KodiSource,
+    fakes: dict[str, FakeKodi],
+) -> None:
+    aioclient_mock.get(f"{SERVER}/Items", exc=TimeoutError)
+    kodi = fakes[kodi_source.host]
+    kodi.library["movies"] = [
+        {"movieid": 3, "file": f"plugin://plugin.video.jellyfin/m/?filename=x.mkv&id={JF_ID}"}
+    ]
+    entry = await setup_better_kodi(hass, kodi_source)
+    await share_link(hass, own_entity_id(hass, entry), DOWNLOAD)
+    assert kodi.playlist[0]["id"] == 3
+
+
+async def test_download_link_without_addon_becomes_a_stream(
+    hass: HomeAssistant, setup: tuple[str, FakeKodi]
+) -> None:
+    """Kodi can't play "Download" links with api_key; the stream of the item works."""
+    player, kodi = setup
+    await share_link(hass, player, DOWNLOAD)
+    assert kodi.files() == [f"{SERVER}/Videos/{JF_ID}/stream?static=true&api_key=KEY&ApiKey=KEY"]
+    queue = await hass.services.async_call(
+        "better_kodi", "get_queue", {ATTR_ENTITY_ID: player}, blocking=True, return_response=True
+    )
+    assert queue[player]["items"][0]["title"] == "The Show – S01E02 – Pilot"
+
+
+async def test_folders_are_not_turned_into_play_paths(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    kodi_source: KodiSource,
+    fakes: dict[str, FakeKodi],
+) -> None:
+    aioclient_mock.get(f"{SERVER}/Items", json={"Items": [{"Name": "Show", "Type": "Series"}]})
+    kodi = fakes[kodi_source.host]
+    kodi.addons = {"plugin.video.jellyfin"}
+    entry = await setup_better_kodi(hass, kodi_source)
+    await share_link(hass, own_entity_id(hass, entry), DOWNLOAD)
+    assert kodi.files() == [DOWNLOAD]  # left to the link resolvers, unchanged

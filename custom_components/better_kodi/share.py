@@ -34,6 +34,7 @@ from homeassistant.helpers.translation import async_get_translations
 from homeassistant.util import slugify
 
 from .const import CONF_SHARE_DEVICES, CONF_SHARE_ENQUEUE, CONF_SHARE_NOTIFY, DOMAIN, SHARE_OFF
+from .redact import redact_url
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -107,7 +108,9 @@ class Shares:
             return  # not a link; maybe another automation wants it
         phone = self._phone(_sender(event))
         if not (candidates := self._candidates(phone)):
-            _LOGGER.debug("Shared link %s: no Better Kodi takes links from this phone", link)
+            _LOGGER.debug(
+                "Shared link %s: no Better Kodi takes links from this phone", redact_url(link)
+            )
             return
         context = Context(parent_id=event.context.id, user_id=event.context.user_id)
         if len(candidates) == 1:
@@ -213,10 +216,17 @@ class Shares:
                 context=context,
             )
         except HomeAssistantError as err:
-            _LOGGER.warning("Shared link %s could not be sent to %s: %s", link, entry.title, err)
+            _LOGGER.warning(
+                "Shared link %s could not be sent to %s: %s",
+                redact_url(link),
+                entry.title,
+                redact_url(str(err)),
+            )
             error = await self._message(err)
         except Exception as err:  # the phone already said "shared"; it must hear about it
-            _LOGGER.exception("Shared link %s could not be sent to %s", link, entry.title)
+            _LOGGER.exception(
+                "Shared link %s could not be sent to %s", redact_url(link), entry.title
+            )
             error = str(err) or type(err).__name__
         else:
             return
@@ -247,14 +257,16 @@ class Shares:
             _LOGGER.warning(
                 "Shared link %s: several Kodis could take it (%s), but the phone can't be "
                 "asked. Limit sharing to certain phones in Better Kodi's options",
-                link,
+                redact_url(link),
                 ", ".join(entry.title for entry in candidates),
             )
             return
         self._forget_old()
         choices = candidates[:MAX_BUTTONS]
         if len(candidates) > MAX_BUTTONS:
-            _LOGGER.debug("Shared link %s: only the first %s Kodis are offered", link, MAX_BUTTONS)
+            _LOGGER.debug(
+                "Shared link %s: only the first %s Kodis are offered", redact_url(link), MAX_BUTTONS
+            )
         token = secrets.token_hex(8)
         self.pending[token] = PendingShare(
             link, phone, tuple(entry.entry_id for entry in choices), time.monotonic(), context

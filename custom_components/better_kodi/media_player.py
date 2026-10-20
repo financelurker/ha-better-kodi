@@ -489,6 +489,13 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
             await self._run(self._data.queue.enqueue(item, mode))
             return
 
+        if _is_playable_link(media_id) and (
+            found := await backends.async_find_kodi_item(self._data.backend_context, media_id)
+        ):
+            # A media server link (for example Jellyfin's "Copy stream URL")
+            await self._run(self._data.queue.enqueue(self._remember(found), mode))
+            return
+
         if _is_playable_link(media_id):
             resolved = await self._async_resolve(media_id)
             if not resolved.queueable:
@@ -516,7 +523,10 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
 
     async def _async_media_source_item(self, url: str) -> dict[str, Any]:
         """Return the best Kodi item for a resolved media source URL (see backends)."""
-        found = await backends.async_kodi_item(self._data.backend_context, url)
+        return self._remember(await backends.async_kodi_item(self._data.backend_context, url))
+
+    def _remember(self, found: backends.BackendItem) -> dict[str, Any]:
+        """Remember title and image of a backend's item for the queue; return the item."""
         if (file := found.item.get("file")) and (found.title or found.thumbnail):
             self._data.queue.known.remember(file, found.title, found.thumbnail)
         return found.item

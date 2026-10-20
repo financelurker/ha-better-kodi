@@ -185,13 +185,15 @@ Integrations such as Jellyfin hand players a plain stream link. Kodi (and so Cas
 
 #### Jellyfin
 
-Better Kodi reads the item from Jellyfin and queues, in this order:
+This also applies to Jellyfin links you share, paste or send yourself: **Copy stream URL** in the Jellyfin app (`…/Items/<id>/Download?api_key=…`), stream and HLS links (`…/Videos/<id>/stream`, `…/master.m3u8`). Better Kodi reads the item from Jellyfin and queues, in this order:
 
 1. **The item from Kodi's own library**, if the Jellyfin for Kodi add-on synced it. Then Kodi knows title and artwork itself, and every app shows them.
 2. **Jellyfin for Kodi's play path**, if the add-on is installed but the item isn't synced. Playback is then reported to Jellyfin (watched state, resume).
-3. **The stream link**, as before.
+3. **The stream link** of the item. A "Download" link is turned into the item's stream link, which Kodi can play (Kodi often can't play "Download" links).
 
-Better Kodi's own queue shows the title in every case. In the 2nd and 3rd case Kodi itself only learns the title once the item plays, so other apps show it as "stream" or similar until then.
+Better Kodi's own queue shows the title in every case. In the 2nd and 3rd case Kodi itself only learns the title once the item plays, so other apps show it as "stream" or "Download" until then.
+
+Title, cover and the direct-path match need Home Assistant to reach the Jellyfin server named in the link (a `jellyfin.local` name may not resolve inside Docker). If it can't, Better Kodi still finds the item in Kodi's library by its ID, or uses Jellyfin for Kodi's play path. Links with folders (a show, a season) are passed on unchanged. API keys in links are never written to the log.
 
 #### Adding a backend (Plex, Emby, …)
 
@@ -200,10 +202,10 @@ Backends are an extension point; contributions are welcome. A backend is a class
 | Method | Does |
 | --- | --- |
 | `recognizes(url)` | Says, without network calls, whether a stream link belongs to this media server. |
-| `async_kodi_item(context, url)` | Returns the Kodi item to queue: a Kodi library item (`{"movieid": 7}`), a Kodi add-on path, or the link, plus title and image for the queue. `None` queues the link as is. |
+| `async_kodi_item(context, url)` | Returns the Kodi item to queue: a Kodi library item (`{"movieid": 7}`), a Kodi add-on path, or the link, plus title and image for the queue. `None`: a media browser item is queued as is, a link goes to the link resolvers. |
 | `async_title(context, file)` | Optional: title and image of a queue entry with such a link, for entries other apps queued. |
 
-`context` gives the backend a web session, the Kodi connection and the list of installed Kodi add-ons. List an instance in `BACKENDS` in `backends/__init__.py`, and add tests (`tests/test_backend_jellyfin.py` shows how). A failing backend never breaks playing: Better Kodi then queues the link as is.
+`context` gives the backend a web session, the Kodi connection and the list of installed Kodi add-ons. List an instance in `BACKENDS` in `backends/__init__.py`, and add tests (`tests/test_backend_jellyfin.py` shows how). A failing backend never breaks playing: Better Kodi then carries on as if it returned `None`.
 
 ### Services
 
@@ -236,6 +238,7 @@ Handover uses file paths, so it also works when the two Kodis have separate libr
 | YouTube playlists | YouTube add-on | ✓ | – |
 | Jellyfin web links (`…/web/#/details?id=…`) | Jellyfin for Kodi (`plugin.video.jellyfin`) | ✓ | ✓ |
 | Jellyfin web links | JellyCon (`plugin.video.jellycon`) | ✓ | – |
+| Jellyfin stream links ("Copy stream URL": `…/Items/<id>/Download?api_key=…`, `…/Videos/<id>/stream…`) | best with Jellyfin for Kodi (see [Jellyfin](#jellyfin)) | ✓ | ✓ |
 | Direct media URLs (`.mp4`, `.mkv`, `.m3u8`, …), Kodi paths (`smb://`, `nfs://`, `plugin://`) | nothing | ✓ | ✓ |
 | Media from Home Assistant's media browser | nothing | ✓ | ✓ |
 | Other web pages | SendToKodi (`plugin.video.sendtokodi`) | ✓ | ✓ |

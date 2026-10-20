@@ -15,6 +15,7 @@ from urllib.parse import unquote
 
 from .const import LIBRARY_ID_KEYS, VIDEO_PLAYLIST
 from .kodi_client import KodiClient, KodiRpcError
+from .redact import redact_url
 from .resolvers import strip_kodi_markup, youtube_thumbnail
 
 _LOGGER = logging.getLogger(__name__)
@@ -259,7 +260,7 @@ class KodiQueue:
                 except TimeoutError:
                     return  # try again next time
                 except Exception:  # a broken answer must not break the queue
-                    _LOGGER.debug("Title lookup for %s failed", file, exc_info=True)
+                    _LOGGER.debug("Title lookup for %s failed", redact_url(file), exc_info=True)
                     found = None
             if found is None:
                 self.known.lookup_failed(file)
