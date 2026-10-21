@@ -34,6 +34,15 @@
       },
       "replace_queue": {
         "default": "mdi:playlist-music"
+      },
+      "library_scan": {
+        "default": "mdi:folder-refresh"
+      },
+      "library_clean": {
+        "default": "mdi:broom"
+      },
+      "reboot": {
+        "default": "mdi:restart"
       }
     }
   }

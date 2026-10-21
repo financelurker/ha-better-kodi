@@ -21,6 +21,8 @@ CONF_WAKE: Final = "wake_on_send"
 CONF_WAKE_TIMEOUT: Final = "wake_timeout"
 CONF_BROWSE_CHOICES: Final = "media_browser_choices"
 CONF_LINK_ENTITIES: Final = "link_entities"
+CONF_MAINTENANCE_BUTTONS: Final = "maintenance_buttons"
+CONF_NOTIFY_ENTITY: Final = "notify_entity"
 CONF_ONLINE_LOOKUPS: Final = "online_lookups"
 CONF_SHARE_ENQUEUE: Final = "share_enqueue"
 CONF_SHARE_DEVICES: Final = "share_devices"
@@ -61,6 +63,8 @@ DEFAULT_OPTIONS: Final = {
     CONF_WAKE_TIMEOUT: DEFAULT_WAKE_TIMEOUT,
     CONF_BROWSE_CHOICES: True,
     CONF_LINK_ENTITIES: True,
+    CONF_MAINTENANCE_BUTTONS: True,
+    CONF_NOTIFY_ENTITY: True,
     CONF_ONLINE_LOOKUPS: True,
     CONF_SHARE_ENQUEUE: "add",
     CONF_SHARE_DEVICES: [],
@@ -69,6 +73,10 @@ DEFAULT_OPTIONS: Final = {
 
 DEFAULT_PORT: Final = 8080
 DEFAULT_WS_PORT: Final = 9090
+
+# Entities besides the media player, by key (unique ID: <entry id>_<key>)
+LINK_KEYS: Final = ("link", "play_now", "play_next", "add_to_queue", "replace_queue")
+MAINTENANCE_KEYS: Final = ("library_scan", "library_clean", "reboot")
 
 # Kodi playlist IDs
 VIDEO_PLAYLIST: Final = 1

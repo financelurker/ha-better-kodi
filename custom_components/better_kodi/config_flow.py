@@ -34,6 +34,8 @@ from .const import (
     CONF_HIDE_SOURCE,
     CONF_LINK_ENTITIES,
     CONF_MAC,
+    CONF_MAINTENANCE_BUTTONS,
+    CONF_NOTIFY_ENTITY,
     CONF_ONLINE_LOOKUPS,
     CONF_POWER_OFF,
     CONF_POWER_ON,
@@ -394,7 +396,13 @@ class BetterKodiOptionsFlow(OptionsFlowWithReload):
         features = probatio.Schema(
             {
                 probatio.Required(key, default=values[key]): selector.BooleanSelector()
-                for key in (CONF_BROWSE_CHOICES, CONF_LINK_ENTITIES, CONF_ONLINE_LOOKUPS)
+                for key in (
+                    CONF_BROWSE_CHOICES,
+                    CONF_LINK_ENTITIES,
+                    CONF_MAINTENANCE_BUTTONS,
+                    CONF_NOTIFY_ENTITY,
+                    CONF_ONLINE_LOOKUPS,
+                )
             }
         )
         devices = values.get(CONF_SHARE_DEVICES) or []

@@ -108,6 +108,12 @@ Before `play_media` (which also covers the buttons, media browser choices and qu
 - Handover wakes the destination before taking the snapshot, so position and time are current when the destination starts.
 - The link buttons refuse to send while Better Kodi's player is unavailable, because Home Assistant silently skips service calls to unavailable entities (and the link would be cleared as if sent).
 
+## Notify entity and maintenance buttons
+
+- A `notify` entity per entry (unique ID `<entry id>_notify`, named after the device, option *Messages on Kodi*): `GUI.ShowNotification` with `title`, `message` and 8 s `displaytime`. Kodi needs a title, so a message without one becomes the title line. The core Kodi integration's notify platform needs YAML; this one doesn't. Images and display time are not part of `notify.send_message`.
+- Buttons with entity category *config* (option *Library and restart buttons*): `VideoLibrary.Scan`, `VideoLibrary.Clean`, `System.Reboot` (device class *restart*; `canreboot` is checked first, a dropped connection afterwards counts as done). A switched-off Kodi gives a connection error; nothing wakes it for these.
+- Entities switched off in the options are removed from the entity registry on setup (by unique ID).
+
 ## Controls in the user interface
 
 Home Assistant's own interface (media browser, more-info dialog, media control card) never passes `enqueue`, for any player. Better Kodi therefore adds:
