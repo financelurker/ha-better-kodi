@@ -50,7 +50,7 @@ Or by hand: in HACS, open the menu → **Custom repositories**, add `https://git
 
 ### Manual
 
-Copy `custom_components/better_kodi` into the `custom_components` folder of your Home Assistant configuration and restart.
+Download `better_kodi.zip` from the [latest release](https://github.com/financelurker/ha-better-kodi/releases/latest), unpack it into `custom_components/better_kodi` in your Home Assistant configuration folder and restart. (A copy taken straight from the repository works too, but shows the version `0.0.0`.)
 
 ## Setup
 
@@ -317,6 +317,8 @@ pip install -r requirements_test.txt
 ruff check . && ruff format --check .
 pytest
 ```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the guidelines and the release process.
 
 ## License
 
