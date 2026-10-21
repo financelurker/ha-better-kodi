@@ -50,7 +50,7 @@ Or by hand: in HACS, open the menu → **Custom repositories**, add `https://git
 
 ### Manual
 
-Copy `custom_components/better_kodi` into the `custom_components` folder of your Home Assistant configuration and restart.
+Download `better_kodi.zip` from the [latest release](https://github.com/financelurker/ha-better-kodi/releases/latest), unpack it into `custom_components/better_kodi` in your Home Assistant configuration folder and restart. (A copy taken straight from the repository works too, but shows the version `0.0.0`.)
 
 ## Setup
 
@@ -309,22 +309,6 @@ Media from Home Assistant's media browser is passed to Kodi as a signed link tha
 
 See [docs/DESIGN.md](docs/DESIGN.md).
 
-## Releases
-
-The GitHub release tag is the only source of the version; nothing in the repository holds it (`manifest.json` keeps the placeholder `0.0.0`, which Home Assistant needs to load the integration).
-
-1. Create a release on GitHub with a tag such as `v1.2.3`, on a commit that contains the *Release* workflow. Pre-releases get their ZIP the same way; HACS offers them only with **Show beta versions** turned on.
-2. The *Release* workflow takes the version from the tag (without the leading `v`; it stops with an error if the tag isn't a version number), writes it into `manifest.json`, packs the integration as `better_kodi.zip` and attaches it to the release.
-3. HACS installs that ZIP (`zip_release` in `hacs.json`), so Home Assistant shows the release version.
-
-To rebuild the ZIP of an existing release, run the *Release* workflow under **Actions → Release → Run workflow** with the release's tag.
-
-Good to know:
-
-- HACS installs **only from releases** (their ZIP). Installing the latest commit of the default branch doesn't work, and as long as there is no full release (only pre-releases or none), HACS installs fail.
-- The ZIP is attached about a minute after the release is published. An update started in that minute fails; just try again.
-- The workflow stops if the tag isn't a version Home Assistant accepts (it checks with the same rules as Home Assistant), so a release can't ship an integration that Home Assistant refuses to load.
-
 ## Development
 
 ```bash
@@ -333,6 +317,8 @@ pip install -r requirements_test.txt
 ruff check . && ruff format --check .
 pytest
 ```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the guidelines and the release process.
 
 ## License
 
