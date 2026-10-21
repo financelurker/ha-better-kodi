@@ -175,8 +175,8 @@ Better Kodi adds to the Kodi device, without any YAML or scripts:
     message: Someone rang the bell
   ```
 
-  `notify.send_message` takes a title and a message. Without a title, the message is shown as the title line.
-- **Update video library**, **Clean video library** (`VideoLibrary.Scan`, `VideoLibrary.Clean`) and **Restart Kodi device** (`System.Reboot`, only if Kodi may restart the device) as buttons, under the device's configuration entities.
+  `notify.send_message` takes a title and a message; without a title, the device name is the title. If Kodi is off, the action fails with an error (add `continue_on_error: true` to the step if the automation should go on anyway).
+- **Update video library**, **Clean video library** (`VideoLibrary.Scan`, `VideoLibrary.Clean`) and **Restart device** (`System.Reboot`, only if Kodi may restart the device) as buttons, under the device's configuration entities.
 
 Switching the TV on and off with Kodi: Kodi does this itself over HDMI-CEC (Kodi: **Settings → System → Input → Peripherals → CEC adapter**, "Devices to power on/off" when Kodi wakes up and goes to sleep). Combined with Better Kodi's Wake on LAN and Suspend, no CEC add-on or script is needed.
 

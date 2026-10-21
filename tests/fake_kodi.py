@@ -94,10 +94,10 @@ class FakeKodi:
     def _System_Reboot(self) -> str:
         return "OK"
 
-    def _VideoLibrary_Scan(self) -> str:
+    def _VideoLibrary_Scan(self, **_: Any) -> str:
         return "OK"
 
-    def _VideoLibrary_Clean(self) -> str:
+    def _VideoLibrary_Clean(self, **_: Any) -> str:
         return "OK"
 
     def _GUI_ShowNotification(self, **params: Any) -> str:

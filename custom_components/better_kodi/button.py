@@ -1,5 +1,7 @@
 """Buttons: play or queue the link from the link field; library and restart."""
 
+from typing import Any
+
 from homeassistant.components.button import ButtonDeviceClass, ButtonEntity
 from homeassistant.components.media_player import (
     ATTR_MEDIA_CONTENT_ID,
@@ -17,7 +19,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from . import BetterKodiConfigEntry, get_option
 from .const import CONF_LINK_ENTITIES, CONF_MAINTENANCE_BUTTONS, DOMAIN
 from .entity import BetterKodiEntity
-from .kodi_client import KodiConnectionError, KodiError, KodiRpcError
+from .kodi_client import KodiAuthError, KodiConnectionError, KodiError, KodiRpcError
 
 BUTTONS = {
     "play_now": MediaPlayerEnqueue.PLAY,
@@ -26,11 +28,14 @@ BUTTONS = {
     "replace_queue": MediaPlayerEnqueue.REPLACE,
 }
 
-# key -> (Kodi JSON-RPC method, capability Kodi must report, device class)
-METHOD_BUTTONS: dict[str, tuple[str, str | None, ButtonDeviceClass | None]] = {
-    "library_scan": ("VideoLibrary.Scan", None, None),
-    "library_clean": ("VideoLibrary.Clean", None, None),
-    "reboot": ("System.Reboot", "canreboot", ButtonDeviceClass.RESTART),
+# key -> (Kodi JSON-RPC method, its parameters, capability Kodi must report, device class)
+METHOD_BUTTONS: dict[
+    str, tuple[str, dict[str, Any] | None, str | None, ButtonDeviceClass | None]
+] = {
+    "library_scan": ("VideoLibrary.Scan", None, None, None),
+    # Cleaning would otherwise put a progress dialog in front of what plays.
+    "library_clean": ("VideoLibrary.Clean", {"showdialogs": False}, None, None),
+    "reboot": ("System.Reboot", None, "canreboot", ButtonDeviceClass.RESTART),
 }
 
 
@@ -89,7 +94,7 @@ class BetterKodiMethodButton(BetterKodiEntity, ButtonEntity):
     def __init__(self, hass: HomeAssistant, entry: BetterKodiConfigEntry, key: str) -> None:
         """Initialize a button for one Kodi command."""
         super().__init__(hass, entry, key)
-        self._method, self._capability, self._attr_device_class = METHOD_BUTTONS[key]
+        self._method, self._params, self._capability, self._attr_device_class = METHOD_BUTTONS[key]
 
     async def async_press(self) -> None:
         """Send the command to Kodi."""
@@ -104,7 +109,7 @@ class BetterKodiMethodButton(BetterKodiEntity, ButtonEntity):
                         translation_domain=DOMAIN, translation_key="reboot_not_allowed"
                     )
             try:
-                await client.call(self._method)
+                await client.call(self._method, self._params)
             except KodiConnectionError:
                 if self._capability is None:
                     raise
@@ -114,6 +119,10 @@ class BetterKodiMethodButton(BetterKodiEntity, ButtonEntity):
                 translation_domain=DOMAIN,
                 translation_key="kodi_error",
                 translation_placeholders={"error": err.message},
+            ) from err
+        except KodiAuthError as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="invalid_auth"
             ) from err
         except KodiError as err:
             raise HomeAssistantError(

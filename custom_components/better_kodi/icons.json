@@ -40,9 +40,6 @@
       },
       "library_clean": {
         "default": "mdi:broom"
-      },
-      "reboot": {
-        "default": "mdi:restart"
       }
     }
   }

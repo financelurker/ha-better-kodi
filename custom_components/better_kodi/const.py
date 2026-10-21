@@ -77,6 +77,8 @@ DEFAULT_WS_PORT: Final = 9090
 # Entities besides the media player, by key (unique ID: <entry id>_<key>)
 LINK_KEYS: Final = ("link", "play_now", "play_next", "add_to_queue", "replace_queue")
 MAINTENANCE_KEYS: Final = ("library_scan", "library_clean", "reboot")
+NOTIFY_KEY: Final = "notify"
+OPTIONAL_KEYS: Final = (*LINK_KEYS, *MAINTENANCE_KEYS, NOTIFY_KEY)
 
 # Kodi playlist IDs
 VIDEO_PLAYLIST: Final = 1

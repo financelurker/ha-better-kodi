@@ -110,8 +110,8 @@ Before `play_media` (which also covers the buttons, media browser choices and qu
 
 ## Notify entity and maintenance buttons
 
-- A `notify` entity per entry (unique ID `<entry id>_notify`, named after the device, option *Messages on Kodi*): `GUI.ShowNotification` with `title`, `message` and 8 s `displaytime`. Kodi needs a title, so a message without one becomes the title line. The core Kodi integration's notify platform needs YAML; this one doesn't. Images and display time are not part of `notify.send_message`.
-- Buttons with entity category *config* (option *Library and restart buttons*): `VideoLibrary.Scan`, `VideoLibrary.Clean`, `System.Reboot` (device class *restart*; `canreboot` is checked first, a dropped connection afterwards counts as done). A switched-off Kodi gives a connection error; nothing wakes it for these.
+- A `notify` entity per entry (unique ID `<entry id>_notify`, named after the device, option *Messages on Kodi*): `GUI.ShowNotification` with `title`, `message` and 8 s `displaytime`. Kodi needs a title, so a message without one gets the device name as title. The entity declares the *title* feature, so the UI offers the field. The core Kodi integration's notify platform needs YAML; this one doesn't. Images and display time are not part of `notify.send_message`.
+- Buttons with entity category *config* (option *Library and restart buttons*): `VideoLibrary.Scan`, `VideoLibrary.Clean` (with `showdialogs: false`, so no progress dialog covers what plays), `System.Reboot` (device class *restart*; `canreboot` is checked first, a dropped connection afterwards counts as done). A switched-off Kodi gives a connection error; nothing wakes it for these.
 - Entities switched off in the options are removed from the entity registry on setup (by unique ID).
 
 ## Controls in the user interface

@@ -102,7 +102,7 @@
         "name": "Clean video library"
       },
       "reboot": {
-        "name": "Restart Kodi device"
+        "name": "Restart device"
       }
     }
   },

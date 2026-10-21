@@ -37,6 +37,8 @@ from .const import (
     DOMAIN,
     LINK_KEYS,
     MAINTENANCE_KEYS,
+    NOTIFY_KEY,
+    OPTIONAL_KEYS,
 )
 from .kodi_client import KodiAuthError, KodiClient, KodiError
 from .queue import KodiQueue
@@ -174,15 +176,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: BetterKodiConfigEntry) -
         web_session=web_session,
     )
     wanted: set[str] = set()
-    if get_option(entry, CONF_LINK_ENTITIES):
+    links, maintenance = (
+        get_option(entry, CONF_LINK_ENTITIES),
+        get_option(entry, CONF_MAINTENANCE_BUTTONS),
+    )
+    if links:
         wanted.update(LINK_KEYS)
         data.platforms.append(Platform.TEXT)
-    if get_option(entry, CONF_MAINTENANCE_BUTTONS):
+    if maintenance:
         wanted.update(MAINTENANCE_KEYS)
-    if wanted - {"link"}:
+    if links or maintenance:
         data.platforms.append(Platform.BUTTON)
     if get_option(entry, CONF_NOTIFY_ENTITY):
-        wanted.add("notify")
+        wanted.add(NOTIFY_KEY)
         data.platforms.append(Platform.NOTIFY)
     _remove_switched_off_entities(hass, entry, wanted)
     await data.async_get_addons(force=True)
@@ -204,12 +210,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: BetterKodiConfigEntry) -
 def _remove_switched_off_entities(
     hass: HomeAssistant, entry: ConfigEntry, wanted: set[str]
 ) -> None:
-    """Remove the link field and buttons that were switched off in the options."""
+    """Remove the entities that were switched off in the options (link, buttons, notify)."""
     registry = er.async_get(hass)
     prefix = f"{entry.entry_id}_"
     for registry_entry in er.async_entries_for_config_entry(registry, entry.entry_id):
         key = registry_entry.unique_id.removeprefix(prefix)
-        if key in (*LINK_KEYS, *MAINTENANCE_KEYS, "notify") and key not in wanted:
+        if key in OPTIONAL_KEYS and key not in wanted:
             registry.async_remove(registry_entry.entity_id)
 
 
