@@ -50,7 +50,7 @@ const shots = {
   async dashboard() {
     await page.goto(`${base}/kodi-demo/0`);
     await settle();
-    await page.getByRole("textbox", { name: "Link" }).fill("https://youtu.be/aqz-KE-bpKQ");
+    await page.getByRole("textbox", { name: "Link" }).fill("https://youtu.be/Xq7mB2vRk9w");
     await settle(800);
     await shot("dashboard", { clip: { x: 500, y: 60, width: 540, height: 490 } });
   },
@@ -91,7 +91,7 @@ const shots = {
     await page.setViewportSize({ width: 1280, height: 1400 });
     await page.goto(`${base}/config/devices/device/${DEVICE}`);
     await settle(3000);
-    await shot("device", { clip: { x: 256, y: 56, width: 700, height: 1170 } });
+    await shot("device", { clip: { x: 256, y: 0, width: 700, height: 1226 } });
     await page.setViewportSize({ width: 1280, height: 820 });
   },
 

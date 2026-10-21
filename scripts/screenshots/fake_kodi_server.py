@@ -28,7 +28,7 @@ from tests.fake_kodi import FakeKodi  # noqa: E402
 
 _LOGGER = logging.getLogger("fake_kodi")
 
-FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+FONT = Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
 
 # Invented titles only.
 MOVIES = [
@@ -70,7 +70,8 @@ def poster(name: str, title: str, hue: float, size: tuple[int, int] = (400, 600)
         (width // 2 - r, height // 3 - r, width // 2 + r, height // 3 + r),
         fill=tuple(min(255, c + 40) for c in top),
     )
-    font = ImageFont.truetype(FONT, max(18, width // 13))
+    size = max(18, width // 13)
+    font = ImageFont.truetype(FONT, size) if FONT.exists() else ImageFont.load_default(size)
     words, lines, line = title.split(), [], ""
     for word in words:
         candidate = f"{line} {word}".strip()
@@ -293,7 +294,7 @@ async def answer(kodi: DemoKodi, request: dict[str, Any]) -> dict[str, Any] | No
         response = {
             "jsonrpc": "2.0",
             "id": request_id,
-            "error": {"code": -32601, "message": err.message},
+            "error": {"code": err.code or -32601, "message": err.message},
         }
     except (KodiError, TypeError) as err:
         _LOGGER.warning("%s(%s) failed: %s", method, params, err)
@@ -350,7 +351,7 @@ async def main() -> None:
     parser.add_argument("--ws-port", type=int, default=9090)
     parser.add_argument("-v", action="store_true", help="log every WebSocket call")
     args = parser.parse_args()
-    logging.basicConfig(level=logging.DEBUG if "-v" in sys.argv else logging.INFO)
+    logging.basicConfig(level=logging.DEBUG if args.v else logging.INFO)
     kodi = DemoKodi()
     for port, ws in ((args.port, False), (args.ws_port, True)):
         runner = web.AppRunner(make_app(kodi, websocket=ws))
