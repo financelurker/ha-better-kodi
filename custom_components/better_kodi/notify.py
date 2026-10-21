@@ -1,0 +1,65 @@
+"""Notify entity: show messages on the TV, on top of what Kodi plays."""
+
+from homeassistant.components.notify import NotifyEntity, NotifyEntityFeature
+from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+
+from . import BetterKodiConfigEntry
+from .const import DOMAIN, NOTIFY_KEY
+from .entity import BetterKodiEntity
+from .kodi_client import KodiAuthError, KodiError, KodiRpcError
+
+DISPLAY_TIME_MS = 8000  # long enough to read a sentence across the room
+
+
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: BetterKodiConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
+) -> None:
+    """Create the notify entity."""
+    async_add_entities([BetterKodiNotify(hass, entry)])
+
+
+class BetterKodiNotify(BetterKodiEntity, NotifyEntity):
+    """Messages shown by Kodi (GUI.ShowNotification)."""
+
+    _attr_supported_features = NotifyEntityFeature.TITLE
+
+    def __init__(self, hass: HomeAssistant, entry: BetterKodiConfigEntry) -> None:
+        """Initialize the notify entity, named after the Kodi device."""
+        super().__init__(hass, entry, NOTIFY_KEY)
+        self._attr_translation_key = None
+        self._attr_name = None
+
+    async def async_send_message(self, message: str, title: str | None = None) -> None:
+        """Show the message on Kodi."""
+        client = self._data.client
+        try:
+            await client.call(
+                "GUI.ShowNotification",
+                {
+                    # Kodi needs a title; its title line is short, so a message
+                    # without a title goes below the device name.
+                    "title": title or self._entry.title,
+                    "message": message,
+                    "displaytime": DISPLAY_TIME_MS,
+                },
+            )
+        except KodiRpcError as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="kodi_error",
+                translation_placeholders={"error": err.message},
+            ) from err
+        except KodiAuthError as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="invalid_auth"
+            ) from err
+        except KodiError as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="cannot_connect",
+                translation_placeholders={"host": client.base_url},
+            ) from err

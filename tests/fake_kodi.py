@@ -36,7 +36,9 @@ class FakeKodi:
             "cansuspend": True,
             "canhibernate": True,
             "canshutdown": True,
+            "canreboot": True,
         }
+        self.notifications: list[dict[str, Any]] = []
 
     # Helpers for tests ----------------------------------------------------------
 
@@ -87,6 +89,19 @@ class FakeKodi:
         return "OK"
 
     def _Application_Quit(self) -> str:
+        return "OK"
+
+    def _System_Reboot(self) -> str:
+        return "OK"
+
+    def _VideoLibrary_Scan(self, **_: Any) -> str:
+        return "OK"
+
+    def _VideoLibrary_Clean(self, **_: Any) -> str:
+        return "OK"
+
+    def _GUI_ShowNotification(self, **params: Any) -> str:
+        self.notifications.append(params)
         return "OK"
 
     def _Addons_GetAddons(self, **_: Any) -> dict[str, Any]:

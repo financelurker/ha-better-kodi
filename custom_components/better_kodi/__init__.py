@@ -28,11 +28,17 @@ from .assist import transfer_exposure
 from .const import (
     CONF_HIDE_SOURCE,
     CONF_LINK_ENTITIES,
+    CONF_MAINTENANCE_BUTTONS,
+    CONF_NOTIFY_ENTITY,
     CONF_ONLINE_LOOKUPS,
     CONF_SOURCE_ENTITY_UUID,
     CONF_WS_PORT,
     DEFAULT_OPTIONS,
     DOMAIN,
+    LINK_KEYS,
+    MAINTENANCE_KEYS,
+    NOTIFY_KEY,
+    OPTIONAL_KEYS,
 )
 from .kodi_client import KodiAuthError, KodiClient, KodiError
 from .queue import KodiQueue
@@ -43,7 +49,6 @@ from .share import async_setup_share
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = [Platform.MEDIA_PLAYER]
-LINK_PLATFORMS = [Platform.TEXT, Platform.BUTTON]  # link field and its buttons
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 ADDON_CACHE_SECONDS = 600
 NOTIFICATIONS = ("Playlist.", "Player.OnPlay", "Player.OnStop", "Player.OnAVStart")
@@ -170,10 +175,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: BetterKodiConfigEntry) -
         source_entity_id=source_entity_id,
         web_session=web_session,
     )
-    if get_option(entry, CONF_LINK_ENTITIES):
-        data.platforms.extend(LINK_PLATFORMS)
-    else:
-        _remove_link_entities(hass, entry)
+    wanted: set[str] = set()
+    links, maintenance = (
+        get_option(entry, CONF_LINK_ENTITIES),
+        get_option(entry, CONF_MAINTENANCE_BUTTONS),
+    )
+    if links:
+        wanted.update(LINK_KEYS)
+        data.platforms.append(Platform.TEXT)
+    if maintenance:
+        wanted.update(MAINTENANCE_KEYS)
+    if links or maintenance:
+        data.platforms.append(Platform.BUTTON)
+    if get_option(entry, CONF_NOTIFY_ENTITY):
+        wanted.add(NOTIFY_KEY)
+        data.platforms.append(Platform.NOTIFY)
+    _remove_switched_off_entities(hass, entry, wanted)
     await data.async_get_addons(force=True)
     entry.runtime_data = data
 
@@ -190,11 +207,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: BetterKodiConfigEntry) -
     return True
 
 
-def _remove_link_entities(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Remove the link field and buttons when they were switched off in the options."""
+def _remove_switched_off_entities(
+    hass: HomeAssistant, entry: ConfigEntry, wanted: set[str]
+) -> None:
+    """Remove the entities that were switched off in the options (link, buttons, notify)."""
     registry = er.async_get(hass)
+    prefix = f"{entry.entry_id}_"
     for registry_entry in er.async_entries_for_config_entry(registry, entry.entry_id):
-        if registry_entry.domain in LINK_PLATFORMS:
+        key = registry_entry.unique_id.removeprefix(prefix)
+        if key in OPTIONAL_KEYS and key not in wanted:
             registry.async_remove(registry_entry.entity_id)
 
 

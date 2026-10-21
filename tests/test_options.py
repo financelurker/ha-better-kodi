@@ -27,6 +27,7 @@ from custom_components.better_kodi.const import (
     CONF_WAKE_TIMEOUT,
     DEFAULT_OPTIONS,
     DOMAIN,
+    LINK_KEYS,
 )
 from custom_components.better_kodi.media_player import BetterKodiMediaPlayer
 from custom_components.better_kodi.queue import KodiQueue
@@ -164,6 +165,7 @@ def link_entities(hass: HomeAssistant, entry: ConfigEntry) -> list[str]:
         registry_entry.entity_id
         for registry_entry in er.async_entries_for_config_entry(er.async_get(hass), entry.entry_id)
         if registry_entry.domain in ("text", "button")
+        and registry_entry.unique_id.removeprefix(f"{entry.entry_id}_") in LINK_KEYS
     )
 
 

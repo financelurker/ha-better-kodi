@@ -67,6 +67,8 @@ Under **Settings → Devices & services → Better Kodi → Configure**:
 | Wait at most | 120 s | How long to wait for Kodi to wake up. |
 | Choices in the media browser | on | See [Play next or add to the queue from the media browser](#play-next-or-add-to-the-queue-from-the-media-browser). |
 | Link field and buttons | on | See [Paste a link](#paste-a-link-link-field-and-buttons). Off removes them. |
+| Library and restart buttons | on | See [Messages on the TV, library and restart](#messages-on-the-tv-library-and-restart). Off removes them. |
+| Messages on Kodi | on | The notify entity, see the same section. Off removes it. |
 | Links shared from phones | Add to queue, all phones | See [Share from your phone](#share-from-your-phone). |
 | Look up titles online | on | Asks YouTube for titles and images of YouTube entries. Off: Home Assistant doesn't contact YouTube for Better Kodi. |
 
@@ -157,6 +159,26 @@ Folders such as shows and seasons, and items that can't be queued (TV channels),
 Good to know: media picked this way in the media selector of an automation or script stores a Better Kodi ID (`better_kodi://…`), which only Better Kodi's media player understands. Dashboard cards that browse media through Better Kodi's media player see the same choices.
 
 Prefer the media browser as with other players (a click plays right away)? Switch off **Choices in the media browser** in the options.
+
+### Messages on the TV, library and restart
+
+Better Kodi adds to the Kodi device, without any YAML or scripts:
+
+- **A notify entity** named like the device (for example `notify.living_room_kodi`). Kodi shows the message for 8 seconds on top of whatever plays:
+
+  ```yaml
+  action: notify.send_message
+  target:
+    entity_id: notify.living_room_kodi
+  data:
+    title: Front door
+    message: Someone rang the bell
+  ```
+
+  `notify.send_message` takes a title and a message; without a title, the device name is the title. If Kodi is off, the action fails with an error (add `continue_on_error: true` to the step if the automation should go on anyway).
+- **Update video library**, **Clean video library** (`VideoLibrary.Scan`, `VideoLibrary.Clean`) and **Restart device** (`System.Reboot`, only if Kodi may restart the device) as buttons, under the device's configuration entities.
+
+Switching the TV on and off with Kodi: Kodi does this itself over HDMI-CEC (Kodi: **Settings → System → Input → Peripherals → CEC adapter**, "Devices to power on/off" when Kodi wakes up and goes to sleep). Combined with Better Kodi's Wake on LAN and Suspend, no CEC add-on or script is needed.
 
 ### Share from your phone
 

@@ -94,6 +94,15 @@
       },
       "replace_queue": {
         "name": "Warteschlange durch Link ersetzen"
+      },
+      "library_scan": {
+        "name": "Videobibliothek aktualisieren"
+      },
+      "library_clean": {
+        "name": "Videobibliothek aufräumen"
+      },
+      "reboot": {
+        "name": "Gerät neu starten"
       }
     }
   },
@@ -166,6 +175,9 @@
     },
     "share_choose": {
       "message": "Welches Kodi soll „{title}“ abspielen?"
+    },
+    "reboot_not_allowed": {
+      "message": "Kodi meldet, dass es dieses Gerät nicht neu starten darf. Erlaube es auf dem Kodi-Gerät (unter Linux zum Beispiel über polkit/logind)."
     }
   },
   "services": {
@@ -315,11 +327,15 @@
             "data": {
               "media_browser_choices": "Auswahl im Media-Browser",
               "link_entities": "Link-Feld und Knöpfe",
+              "maintenance_buttons": "Knöpfe für Bibliothek und Neustart",
+              "notify_entity": "Meldungen auf Kodi",
               "online_lookups": "Titel online nachschlagen"
             },
             "data_description": {
               "media_browser_choices": "Ein Film oder eine Folge öffnet „Jetzt abspielen / Als Nächstes / Zur Warteschlange / Warteschlange ersetzen“. Aus: wird sofort abgespielt, wie bei anderen Playern.",
               "link_entities": "Ein Textfeld für Links und vier Knöpfe am Kodi-Gerät. Aus: werden entfernt.",
+              "maintenance_buttons": "Knöpfe am Kodi-Gerät, um Kodis Videobibliothek zu aktualisieren oder aufzuräumen und das Kodi-Gerät neu zu starten. Aus: werden entfernt.",
+              "notify_entity": "Eine Notify-Entität am Kodi-Gerät: notify.send_message blendet Titel und Text am Fernseher über dem laufenden Bild ein. Aus: wird entfernt.",
               "online_lookups": "Fragt bei YouTube Titel und Bilder von YouTube-Einträgen der Warteschlange ab. Aus: Home Assistant kontaktiert YouTube nicht."
             }
           }
