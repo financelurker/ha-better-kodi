@@ -13,6 +13,21 @@ Better Kodi does not replace the built-in Kodi integration. It sits on top of it
 
 > Kodi's **music** queue is left alone for now; Better Kodi only works with the video queue. For music, see [Better Media Player](https://github.com/financelurker/ha-better-media-player) and Music Assistant. If you use Kodi for music and know what a music queue in Better Kodi should do, input is always welcome: [open an issue](https://github.com/financelurker/ha-better-kodi/issues).
 
+## Screenshots
+
+<table>
+<tr>
+<td width="50%" valign="top"><b>Paste a link</b> – play it now, next, at the end of the queue, or replace the queue<br><br><img src="https://raw.githubusercontent.com/financelurker/ha-better-kodi/main/docs/images/dashboard.png?v=0a0aa34eee" alt="Dashboard with Kodi's media card, a link field and four buttons"></td>
+<td width="50%" valign="top"><b>Media browser</b> – a movie or episode offers play now, play next, add to queue and replace queue<br><br><img src="https://raw.githubusercontent.com/financelurker/ha-better-kodi/main/docs/images/choices.png?v=25357c890e" alt="Media browser: a movie with Play now, Play next, Add to queue and Replace queue"></td>
+</tr>
+<tr>
+<td width="50%" valign="top"><b>The queue</b> – a folder at the top of Kodi's media browser<br><br><img src="https://raw.githubusercontent.com/financelurker/ha-better-kodi/main/docs/images/media-browser.png?v=c60a3f2509" alt="Media browser: the Queue folder next to Kodi's library"></td>
+<td width="50%" valign="top"><b>What's coming</b> – the playing entry marked, a click jumps to an entry<br><br><img src="https://raw.githubusercontent.com/financelurker/ha-better-kodi/main/docs/images/queue.png?v=ed7f7ec221" alt="The queue with the playing entry marked"></td>
+</tr>
+</table>
+
+Taken on Home Assistant 2026.10.2, with a simulated Kodi and made-up titles.
+
 ## Requirements
 
 - Home Assistant 2026.10 or newer
@@ -53,9 +68,19 @@ What happens:
 - **Assist**: if the Kodi media player was exposed to Assist, the exposure and its aliases move to Better Kodi's media player, so voice commands reach the right one. Check under **Settings → Voice assistants → Expose**; see [Exposing entities to Assist](https://www.home-assistant.io/voice_control/voice_remote_expose_devices/).
 - When you remove Better Kodi, the Kodi media player is shown again and gets its Assist settings back.
 
+<img src="https://raw.githubusercontent.com/financelurker/ha-better-kodi/main/docs/images/device.png?v=82a75c57ff" alt="Kodi device page: Better Kodi's media player, link field and buttons, notifier and library buttons" width="520">
+
+The hidden Kodi media player and Better Kodi\'s media player share the device.
+
 ### Options
 
 Under **Settings → Devices & services → Better Kodi → Configure**:
+
+<details>
+<summary>Screenshot of the options</summary>
+<br>
+<img src="https://raw.githubusercontent.com/financelurker/ha-better-kodi/main/docs/images/options.png?v=6459f6e0bf" alt="Better Kodi options: switching Kodi on and off, links shared from phones, extras" width="440">
+</details>
 
 | Option | Default | What it does |
 | --- | --- | --- |
@@ -65,11 +90,11 @@ Under **Settings → Devices & services → Better Kodi → Configure**:
 | Switch Kodi off with | Kodi automation | **Suspend**, **Hibernate**, **Shut down** or **Quit Kodi** (Kodi commands), or your "Kodi turned off" automation. Quit Kodi leaves the device on (see below). |
 | Wake Kodi before sending | on | See below. |
 | Wait at most | 120 s | How long to wait for Kodi to wake up. |
+| Links shared from phones | Add to queue, all phones | See [Share from your phone](#share-from-your-phone). |
 | Choices in the media browser | on | See [Play next or add to the queue from the media browser](#play-next-or-add-to-the-queue-from-the-media-browser). |
 | Link field and buttons | on | See [Paste a link](#paste-a-link-link-field-and-buttons). Off removes them. |
 | Library and restart buttons | on | See [Messages on the TV, library and restart](#messages-on-the-tv-library-and-restart). Off removes them. |
 | Messages on Kodi | on | The notify entity, see the same section. Off removes it. |
-| Links shared from phones | Add to queue, all phones | See [Share from your phone](#share-from-your-phone). |
 | Look up titles online | on | Asks YouTube for titles and images of YouTube entries. Off: Home Assistant doesn't contact YouTube for Better Kodi. |
 
 ### Switching Kodi on and off
@@ -130,17 +155,24 @@ data:
 
 Better Kodi adds a **Link** field and four buttons to the Kodi device: **Play link now**, **Play link next**, **Add link to queue** and **Replace queue with link**. Paste a link, press a button, done; the field is cleared afterwards (and kept if the link can't be played).
 
-Put them on a dashboard, for example:
+Put them on a dashboard, for example (the card in the screenshot above):
 
 ```yaml
 type: entities
+title: Send a link to Kodi
 entities:
   - entity: text.living_room_kodi_link
+    name: Link
   - type: buttons
     entities:
-      - button.living_room_kodi_play_link_now
-      - button.living_room_kodi_play_link_next
-      - button.living_room_kodi_add_link_to_queue
+      - entity: button.living_room_kodi_play_link_now
+        name: Play now
+      - entity: button.living_room_kodi_play_link_next
+        name: Play next
+      - entity: button.living_room_kodi_add_link_to_queue
+        name: Add to queue
+      - entity: button.living_room_kodi_replace_queue_with_link
+        name: Replace queue
 ```
 
 The field holds up to 255 characters, the longest value Home Assistant can store. For longer links use `media_player.play_media` directly.

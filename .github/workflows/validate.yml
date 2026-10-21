@@ -42,6 +42,8 @@ jobs:
       - run: pip install -r requirements_test.txt
       - run: ruff check .
       - run: ruff format --check .
+      - name: README image URLs up to date
+        run: python scripts/readme_images.py --check
       - name: pytest
         shell: bash
         run: |
