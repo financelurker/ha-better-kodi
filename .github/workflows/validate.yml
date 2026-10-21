@@ -26,8 +26,6 @@ jobs:
       - uses: hacs/action@main
         with:
           category: integration
-          # No brand icon yet (custom integrations can ship one in brand/ since HA 2026.3).
-          ignore: brands
 
   tests:
     name: Lint and tests
