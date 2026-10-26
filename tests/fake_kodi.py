@@ -77,6 +77,9 @@ class FakeKodi:
         self.window_label = "Home"
         # Kodi's notifications over WebSocket, if a test listens
         self.notify: Callable[[str, dict[str, Any]], None] | None = None
+        # Kodi's current playlist (MUSIC, VIDEO or None) and the position before a stop
+        self.current_playlist: int | None = None
+        self.position_before_stop = -1
 
     # Helpers for tests ----------------------------------------------------------
 
@@ -111,13 +114,30 @@ class FakeKodi:
         self.player_type = "video"
         self._emit("Player.OnPlay")
 
-    def start_video_outside_queue(self, item: dict[str, Any], seconds: int = 0) -> None:
-        """Pretend a library item or file plays that was not started from the queue."""
+    def start_video_outside_queue(
+        self, item: dict[str, Any], seconds: int = 0, *, queue_current: bool = False
+    ) -> None:
+        """Pretend a library item or file plays that was not started from the queue.
+
+        queue_current: the queue is still Kodi's current playlist (Kodi plays it
+        after the item); otherwise Kodi stops after the item.
+        """
+        self.current_playlist = VIDEO if queue_current else None
         self.player_active = True
         self.player_type = "video"
         self.position = -1
         self.current_outside = dict(item)
         self.time = _time(seconds)
+
+    def video_ends(self) -> None:
+        """The playing video reaches its end: Kodi plays the next entry or stops."""
+        assert self.player_active
+        self._stop(end=True)
+        following = self.position_before_stop + 1
+        if self.current_playlist == VIDEO and following < len(self.playlist):
+            self._start(None, following, 0)
+        else:
+            self.current_playlist = None
 
     def _emit(self, method: str, **data: Any) -> None:
         if self.notify is not None:
@@ -126,6 +146,7 @@ class FakeKodi:
     def _stop(self, *, end: bool) -> None:
         if not self.player_active:
             return
+        self.position_before_stop = self.position
         self.player_active = False
         self.position = -1
         self._clip = None
@@ -139,6 +160,7 @@ class FakeKodi:
                 self._clip = (self._clip[0], time.monotonic())  # plays again, gaplessly
             else:
                 self._stop(end=True)
+                self.current_playlist = None  # nothing after the clip: Kodi stops
 
     # JSON-RPC --------------------------------------------------------------------
 
@@ -158,8 +180,16 @@ class FakeKodi:
         return "pong"
 
     def _XBMC_GetInfoLabels(self, labels: list[str]) -> dict[str, str]:
-        answer = self.mac_answers.pop(0) if len(self.mac_answers) > 1 else self.mac_answers[0]
-        return {label: answer if label == "Network.MacAddress" else "" for label in labels}
+        answers = {label: "" for label in labels}
+        if "Network.MacAddress" in labels:
+            answer = self.mac_answers.pop(0) if len(self.mac_answers) > 1 else self.mac_answers[0]
+            answers["Network.MacAddress"] = answer
+        # Like Kodi: only while that playlist is the current one
+        if "VideoPlayer.PlaylistLength" in labels and self.current_playlist == VIDEO:
+            answers["VideoPlayer.PlaylistLength"] = str(len(self.playlist))
+        if "MusicPlayer.PlaylistLength" in labels and self.current_playlist == MUSIC:
+            answers["MusicPlayer.PlaylistLength"] = str(len(self.music_playlist))
+        return answers
 
     def _System_GetProperties(self, properties: list[str]) -> dict[str, bool]:
         return {name: self.power.get(name, False) for name in properties}
@@ -270,6 +300,7 @@ class FakeKodi:
                 self.music_shuffled = False
             self._stop(end=False)
             self.player_type, self.position, self.player_active = "audio", position, True
+            self.current_playlist = MUSIC
             self.speed = 1
             self._emit("Player.OnPlay")
             return "OK"
@@ -284,6 +315,7 @@ class FakeKodi:
             if not 0 <= position < len(self.playlist):
                 raise KodiRpcError("Player.Open", -32602, "Invalid params.")
             self.position = position
+            self.current_playlist = VIDEO
             self.time = {"hours": 0, "minutes": 0, "seconds": 0, "milliseconds": 0}
             self._forget_streams()
             if self.start_delay:
@@ -310,6 +342,7 @@ class FakeKodi:
                 return "OK"  # added, but the player fails
             self._clip = (file, time.monotonic())
             self.player_type, self.position, self.player_active = "audio", 0, True
+            self.current_playlist = MUSIC
             self._emit("Player.OnPlay")
             self._emit("Player.OnAVStart")
             return "OK"
@@ -318,6 +351,7 @@ class FakeKodi:
             self.clips.append(file)
             self._clip = (file, time.monotonic())
             self.player_type, self.position, self.player_active = "video", 0, True
+            self.current_playlist = VIDEO
             self._emit("Player.OnPlay")
             self._emit("Player.OnAVStart")
             return "OK"
@@ -342,6 +376,8 @@ class FakeKodi:
         return "OK"
 
     def _start(self, outside: dict[str, Any] | None, position: int, seconds: int) -> None:
+        if position >= 0:
+            self.current_playlist = VIDEO
         self.player_active, self.player_type = True, "video"
         self.position, self.current_outside = position, outside
         self.time = _time(seconds)
@@ -464,9 +500,12 @@ class FakeKodi:
     def _Playlist_Insert(self, playlistid: int, position: int, item: Any) -> str:
         if not 0 <= position <= len(self.playlist):
             raise KodiRpcError("Playlist.Insert", -32602, "Invalid params.")
-        self.playlist.insert(position, self._to_playlist_item(item))
+        entries = [
+            self._to_playlist_item(entry) for entry in (item if isinstance(item, list) else [item])
+        ]
+        self.playlist[position:position] = entries
         if self.position >= 0 and position <= self.position:
-            self.position += 1
+            self.position += len(entries)
         return "OK"
 
     def _Playlist_Remove(self, playlistid: int, position: int) -> str:

@@ -259,7 +259,7 @@ Good to know:
 
 - The clip is played instead of the video; Kodi stops the video and shows its music screen for the clip. Afterwards the video starts again and buffers like when you start it yourself; YouTube and other add-on items are looked up again by the add-on. Streaming items take a few seconds.
 - If the video was close to its end, Kodi may count it as watched when the announcement stops it.
-- Kodi can only start a single movie again by making it the only entry of its playlist. If it played outside the queue, Better Kodi puts the queue back afterwards, and Kodi then continues with the queue once the movie ends.
+- A movie that played outside the queue: Kodi can only start it again as an entry of its playlist. If Kodi would have stopped after the movie, Better Kodi puts the queue back in front of it, so Kodi still stops after the movie, and removes the movie's entry once the movie is over. Until then the queue shows the movie as its last, playing entry (and keeps it if Home Assistant restarts meanwhile). If Kodi would have gone on with the queue after the movie, it still does.
 - The volume is Kodi's own volume. If the TV or receiver is off, or its volume is down, the announcement is not heard; Better Kodi can't tell.
 - Without `announce: true`, a clip is played like any other media: **Play now** puts it behind the playing entry, and it stays in the queue.
 - Kodi has to reach Home Assistant to fetch the clip, as with the media browser (Home Assistant's internal URL).

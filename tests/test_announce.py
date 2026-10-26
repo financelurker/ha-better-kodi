@@ -1,6 +1,7 @@
 """Tests for announcements: interrupt Kodi, play a clip, continue where it was."""
 
 import asyncio
+from collections.abc import Generator
 from typing import Any
 
 import pytest
@@ -34,6 +35,7 @@ SUBTITLES = [
 @pytest.fixture(autouse=True)
 def fast_polling(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(announce, "POLL_INTERVAL", 0.05)
+    monkeypatch.setattr(announce, "TAIL_CHECK_INTERVAL", 0.1)
 
 
 @pytest.fixture(params=["websocket", "polling"])
@@ -53,11 +55,13 @@ def kodi(request: pytest.FixtureRequest) -> FakeKodi:
 
 
 @pytest.fixture
-def announcer(kodi: FakeKodi) -> Announcer:
+def announcer(kodi: FakeKodi) -> Generator[Announcer]:
     announcer = Announcer(kodi)  # FakeKodi answers like KodiClient
     if kodi.websocket:
         kodi.notify = announcer.on_notification
-    return announcer
+        kodi.notifications_connected = True
+    yield announcer
+    announcer.close()
 
 
 def opened(kodi: FakeKodi) -> list[dict[str, Any]]:
@@ -125,20 +129,61 @@ async def test_nothing_playing(kodi: FakeKodi, announcer: Announcer) -> None:
     assert not kodi.player_active
 
 
-async def test_library_movie_outside_the_queue(kodi: FakeKodi, announcer: Announcer) -> None:
-    kodi.start_video_outside_queue(
-        {"type": "movie", "id": 7, "file": "smb://nas/movie/7.mkv"}, seconds=754
-    )
+MOVIE_7 = {"type": "movie", "id": 7, "file": "smb://nas/movie/7.mkv"}
+AT_12_34 = {"hours": 0, "minutes": 12, "seconds": 34, "milliseconds": 0}
+
+
+async def test_movie_outside_the_queue_kodi_goes_on_with_the_queue(
+    kodi: FakeKodi, announcer: Announcer
+) -> None:
+    """Case A: the queue is still Kodi's current playlist; Kodi plays it after the movie."""
+    kodi.start_video_outside_queue(MOVIE_7, seconds=754, queue_current=True)
     queue = kodi.files()
     await announcer.announce(CLIP)
-    assert opened(kodi)[-1] == {
-        "item": {"movieid": 7},
-        "options": {"resume": {"hours": 0, "minutes": 12, "seconds": 34, "milliseconds": 0}},
-    }
+    assert opened(kodi)[-1] == {"item": {"movieid": 7}, "options": {"resume": AT_12_34}}
     assert kodi.current_outside["id"] == 7
-    assert kodi.position == -1  # plays outside the queue again
-    assert kodi.time["minutes"] == 12
-    assert kodi.files() == queue  # Kodi replaced the queue with the movie; put back
+    assert kodi.position == -1  # outside the queue again
+    assert kodi.time == AT_12_34
+    assert kodi.files() == queue
+    kodi.video_ends()
+    assert kodi.player_active
+    assert kodi.position == 0  # as it would have without the announcement
+
+
+async def test_movie_outside_the_queue_kodi_stops_after_it(
+    kodi: FakeKodi, announcer: Announcer
+) -> None:
+    """Case B: Kodi would stop after the movie; it still does, and the queue is as before."""
+    kodi.start_video_outside_queue(MOVIE_7, seconds=754)
+    queue = kodi.files()
+    await announcer.announce(CLIP)
+    # Kodi can only start the movie as a playlist entry: the queue goes in front of it.
+    assert kodi.files() == [*queue, MOVIE_7["file"]]
+    assert kodi.position == len(queue)
+    assert kodi.time == AT_12_34
+    kodi.video_ends()
+    assert not kodi.player_active  # stopped after the movie, as before
+    for _ in range(100):
+        if kodi.files() == queue:
+            break
+        await asyncio.sleep(0.05)
+    assert kodi.files() == queue  # the movie's entry is gone again
+
+
+async def test_reopened_movie_entry_stays_while_it_plays(
+    kodi: FakeKodi, announcer: Announcer
+) -> None:
+    kodi.start_video_outside_queue(MOVIE_7, seconds=754)
+    queue = kodi.files()
+    await announcer.announce(CLIP)
+    await asyncio.sleep(0.3)  # a few checks
+    assert kodi.files() == [*queue, MOVIE_7["file"]]
+    kodi.user_stops()
+    for _ in range(100):
+        if kodi.files() == queue:
+            break
+        await asyncio.sleep(0.05)
+    assert kodi.files() == queue
 
 
 async def test_live_tv_is_switched_back(kodi: FakeKodi, announcer: Announcer) -> None:
@@ -372,9 +417,7 @@ async def test_cancelled_while_continuing_kodi_still_continues(
     kodi: FakeKodi, announcer: Announcer
 ) -> None:
     """An automation restarted while Kodi starts the movie again."""
-    kodi.start_video_outside_queue(
-        {"type": "movie", "id": 7, "file": "smb://nas/movie/7.mkv"}, seconds=754
-    )
+    kodi.start_video_outside_queue(MOVIE_7, seconds=754, queue_current=True)
     queue = kodi.files()
     kodi.resume_dialog = True  # starting again takes a moment (the dialog)
     task = asyncio.ensure_future(announcer.announce(CLIP))

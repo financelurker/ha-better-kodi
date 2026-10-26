@@ -251,7 +251,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: BetterKodiConfigEntry) 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Give the Kodi entity back what Better Kodi took over."""
-    hass.data.get(ANNOUNCERS, {}).pop(entry.entry_id, None)
+    if (announcer := hass.data.get(ANNOUNCERS, {}).pop(entry.entry_id, None)) is not None:
+        announcer.close()
     registry = er.async_get(hass)
     source_entity_id = er.async_resolve_entity_id(registry, entry.data[CONF_SOURCE_ENTITY_UUID])
     if source_entity_id is None:
