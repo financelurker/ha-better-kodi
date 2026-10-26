@@ -186,6 +186,63 @@ async def test_reopened_movie_entry_stays_while_it_plays(
     assert kodi.files() == queue
 
 
+async def test_movie_outside_the_queue_with_an_add_on_path(
+    kodi: FakeKodi, announcer: Announcer
+) -> None:
+    """Kodi shows a playing add-on item by its stream URL; it is removed all the same."""
+    item = "plugin://plugin.video.jellyfin/?id=1"
+    kodi.start_video_outside_queue({"file": item}, seconds=754)
+    kodi.resolved = {item: "http://jellyfin.local/Videos/1/stream?api_key=x"}
+    queue = kodi.files()
+    await announcer.announce(CLIP)
+    assert kodi.position == len(queue)
+    assert kodi.files()[:-1] == queue
+    kodi.video_ends()
+    for _ in range(100):
+        if kodi.files() == queue:
+            break
+        await asyncio.sleep(0.05)
+    assert kodi.files() == queue
+
+
+async def test_users_own_entries_are_never_removed(kodi: FakeKodi, announcer: Announcer) -> None:
+    """The user replaced the queue while the movie played; it contains the same movie."""
+    kodi.start_video_outside_queue(MOVIE_7, seconds=754)
+    await announcer.announce(CLIP)
+    kodi.user_stops()
+    kodi._Playlist_Clear(1)
+    kodi._Playlist_Add(1, [{"movieid": 7}, {"file": "smb://nas/c.mkv"}])
+    users = kodi.files()
+    await asyncio.sleep(0.5)  # several checks
+    assert kodi.files() == users
+
+
+async def test_entries_added_after_the_movie_stay(kodi: FakeKodi, announcer: Announcer) -> None:
+    """A link added while the movie plays: Kodi plays it after the movie, the movie goes."""
+    kodi.start_video_outside_queue(MOVIE_7, seconds=754)
+    queue = kodi.files()
+    await announcer.announce(CLIP)
+    kodi._Playlist_Add(1, {"file": "https://cdn.example/b.mp4"})
+    kodi.video_ends()
+    assert kodi.player_active  # plays the added link
+    for _ in range(100):
+        if kodi.files() == [*queue, "https://cdn.example/b.mp4"]:
+            break
+        await asyncio.sleep(0.05)
+    assert kodi.files() == [*queue, "https://cdn.example/b.mp4"]
+    assert kodi.position == len(queue)  # still the link
+
+
+async def test_movie_outside_a_shuffled_queue(kodi: FakeKodi, announcer: Announcer) -> None:
+    """With shuffle or repeat on, Kodi goes on with the queue after the movie (a known limit)."""
+    kodi.start_video_outside_queue(MOVIE_7, seconds=754)
+    kodi.video_repeat = "all"
+    queue = kodi.files()
+    await announcer.announce(CLIP)
+    assert kodi.files() == queue
+    assert kodi.position == -1
+
+
 async def test_live_tv_is_switched_back(kodi: FakeKodi, announcer: Announcer) -> None:
     kodi.start_video_outside_queue({"type": "channel", "id": 3, "file": "pvr://channels/3"}, 900)
     await announcer.announce(CLIP)

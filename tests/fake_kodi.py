@@ -65,6 +65,7 @@ class FakeKodi:
         # again (here: reversed, to be predictable); opening unshuffled restores
         # the order the entries were added in.
         self.music_shuffled = False
+        self.video_repeat = "off"  # repeat of the video playlist
         self._music_added: list[dict[str, Any]] = []
         # Called after Kodi opened a single item (an add-on filling the playlist, say)
         self.after_open_single: Callable[[], None] | None = None
@@ -79,6 +80,7 @@ class FakeKodi:
         self.notify: Callable[[str, dict[str, Any]], None] | None = None
         # Kodi's current playlist (MUSIC, VIDEO or None) and the position before a stop
         self.current_playlist: int | None = None
+        self.resolved: dict[str, str] = {}  # add-on path -> stream URL once it plays
         self.position_before_stop = -1
 
     # Helpers for tests ----------------------------------------------------------
@@ -105,6 +107,7 @@ class FakeKodi:
         """Someone presses stop."""
         self.press_key()
         self._stop(end=False)
+        self.current_playlist = None  # like Kodi on a stop
 
     def user_plays(self, file: str) -> None:
         """Someone starts something else on the TV."""
@@ -252,7 +255,7 @@ class FakeKodi:
             "position": self.position,
             "time": dict(self.time),
             "speed": self.speed,
-            "repeat": self.music_repeat if self.player_type == "audio" else "off",
+            "repeat": self.music_repeat if self.player_type == "audio" else self.video_repeat,
             "shuffled": self.music_shuffled if self.player_type == "audio" else False,
             "totaltime": _time(0),
         }
@@ -378,6 +381,10 @@ class FakeKodi:
     def _start(self, outside: dict[str, Any] | None, position: int, seconds: int) -> None:
         if position >= 0:
             self.current_playlist = VIDEO
+            # Like Kodi: the playing entry shows what the add-on resolved it to
+            entry = self.playlist[position]
+            if (resolved := self.resolved.get(entry.get("file", ""))) is not None:
+                entry["file"] = resolved
         self.player_active, self.player_type = True, "video"
         self.position, self.current_outside = position, outside
         self.time = _time(seconds)
@@ -498,21 +505,25 @@ class FakeKodi:
         return "OK"
 
     def _Playlist_Insert(self, playlistid: int, position: int, item: Any) -> str:
-        if not 0 <= position <= len(self.playlist):
+        playlist = self._list(playlistid)
+        if not 0 <= position <= len(playlist):
             raise KodiRpcError("Playlist.Insert", -32602, "Invalid params.")
         entries = [
             self._to_playlist_item(entry) for entry in (item if isinstance(item, list) else [item])
         ]
-        self.playlist[position:position] = entries
-        if self.position >= 0 and position <= self.position:
-            self.position += len(entries)
+        playlist[position:position] = entries
+        playing = self.music_playlist if self.player_type == "audio" else self.playlist
+        if playlist is playing and self.position >= 0 and position <= self.position:
+            self.position += 1  # like Kodi: by one, also for several entries
         return "OK"
 
     def _Playlist_Remove(self, playlistid: int, position: int) -> str:
-        if position == self.position:
+        """Like Kodi: only the playing entry of the current playlist is refused."""
+        current = self.current_playlist == playlistid
+        if current and position == self.position:
             raise KodiRpcError("Playlist.Remove", -32602, "Invalid params.")
-        del self.playlist[position]
-        if position < self.position:
+        del self._list(playlistid)[position]
+        if current and position < self.position:
             self.position -= 1
         return "OK"
 
