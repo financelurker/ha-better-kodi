@@ -27,6 +27,9 @@ CONF_ONLINE_LOOKUPS: Final = "online_lookups"
 CONF_SHARE_ENQUEUE: Final = "share_enqueue"
 CONF_SHARE_DEVICES: Final = "share_devices"
 CONF_SHARE_NOTIFY: Final = "share_notify_errors"
+CONF_ANNOUNCE_VOLUME: Final = "announce_volume"
+CONF_ANNOUNCE_MAX_DURATION: Final = "announce_max_duration"
+CONF_ANNOUNCE_START_TIMEOUT: Final = "announce_start_timeout"
 
 # Links shared from the Home Assistant app ("Share" on the phone)
 SHARE_OFF: Final = "off"
@@ -69,6 +72,9 @@ DEFAULT_OPTIONS: Final = {
     CONF_SHARE_ENQUEUE: "add",
     CONF_SHARE_DEVICES: [],
     CONF_SHARE_NOTIFY: True,
+    CONF_ANNOUNCE_VOLUME: None,  # None: the clip plays at Kodi's volume
+    CONF_ANNOUNCE_MAX_DURATION: 60,
+    CONF_ANNOUNCE_START_TIMEOUT: 30,
 }
 
 DEFAULT_PORT: Final = 8080

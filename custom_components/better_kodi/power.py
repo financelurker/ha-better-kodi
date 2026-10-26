@@ -1,6 +1,7 @@
 """Switching Kodi on (Wake on LAN) and off (Kodi's own power commands)."""
 
 import asyncio
+from collections.abc import Callable
 import logging
 import re
 import socket
@@ -59,14 +60,21 @@ class PowerOffNotAllowed(Exception):
     """Kodi says it may not suspend, hibernate or shut down this device."""
 
 
-async def async_power_off(client: KodiClient, method: str) -> None:
-    """Switch Kodi off with one of its JSON-RPC power commands."""
+async def async_power_off(
+    client: KodiClient, method: str, *, still_wanted: Callable[[], bool] | None = None
+) -> None:
+    """Switch Kodi off with one of its JSON-RPC power commands.
+
+    still_wanted is asked right before the command; False leaves Kodi on.
+    """
     # Fails if Kodi is unreachable, so that a dropped answer below means "going down".
     await client.ping()
     if capability := POWER_CAPABILITIES.get(method):
         properties = await client.call("System.GetProperties", {"properties": [capability]})
         if not (properties or {}).get(capability):
             raise PowerOffNotAllowed(method)
+    if still_wanted is not None and not still_wanted():
+        return
     try:
         await client.call(method)
     except KodiConnectionError as err:

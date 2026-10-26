@@ -98,6 +98,7 @@ class BetterKodiMethodButton(BetterKodiEntity, ButtonEntity):
 
     async def async_press(self) -> None:
         """Send the command to Kodi."""
+        self._data.mark_used()
         client = self._data.client
         try:
             if self._capability:

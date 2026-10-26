@@ -169,11 +169,49 @@ The service field is called `destination`, not `target`, so it does not get mixe
 
 If the source plays something that is not from the queue, only that item is handed over.
 
+## Announcements
+
+`media_player.play_media` with `announce: true` (which `tts.speak` always sets) is an announcement; the entity reports `MEDIA_ANNOUNCE`. Without `announce`, a clip is ordinary media, also a text-to-speech one: Better Kodi does not guess from the source.
+
+Kodi can't mix a clip into a video, and no add-on is assumed. So `announce.py` interrupts, plays the clip and continues:
+
+1. **Muted**: muted means muted. Nothing happens (no error); the reason for the mute is unknown.
+2. **Note** volume, the active player (video before audio) with playlist and position or the item (library ID, file, add-on path, channel), time, pause (speed 0), audio track and subtitle (index, language, name, on/off), and the music and video playlists. An item that can't be opened again (no file, no ID) is not interrupted; the action fails.
+3. **Clip**: `Player.Open` with the clip as a single file, at the announcement volume (option, or `announce_volume` in `extra`). Kodi's own resume dialog never shows for JSON-RPC.
+4. **End**: Kodi's `Player.OnStop` after the clip's `Player.OnPlay` (WebSocket) tells whether the clip played to the end (`end`). Without WebSocket, polling: a stop well before the clip's end (2.5 s, the time is a poll old) means someone stopped it, and a clip that sits in the music playlist with no player for 3 s has played (shorter than a poll). Repeat of the music playlist is switched off while the clip plays, or Kodi would loop it. A clip still playing after the longest announcement time is stopped.
+5. **Continue**: the volume goes back unless someone changed it. A queue entry is opened by playlist and position, an item outside the playlist with `Player.Open` and the `resume` time, a channel by `channelid`. Then: seek if Kodi isn't within 3 s of the time (Kodi ignores `resume` for playlist positions), choose the audio track and subtitle again (language and name, index as fallback; Kodi remembers them per file, this covers changing stream URLs), pause.
+6. The action returns after that, or with an error if Kodi did not play again within the wait time (option, 30 s).
+
+Details found in Kodi's source:
+
+- `Player.Open` with a single item replaces the playlist of its type with that item and plays it from there (`CPlayListPlayer::Play(item)`): the music playlist becomes the clip, and the video playlist (the queue) becomes a movie that is reopened outside the queue. Kodi's own menus start single videos the same way (`GUIWindowVideoBase::OnPlayMedia`), so "a movie outside a different queue" mostly comes from add-ons. Better Kodi puts a playlist back (`Playlist.Clear`, `Playlist.Add`; Kodi handles them in order, and clearing doesn't stop what plays) only if it holds just what Better Kodi opened (the clip, in the music or the video playlist depending on what kind of clip it is, or the reopened item; after an add-on item plays, Kodi may list it by its resolved path, so a single entry counts as the reopened item); a playlist someone or an add-on filled meanwhile is left alone. Entries go back by library ID where they have one, otherwise by path.
+- Kodi continuing is restored exactly as it was. What Kodi does after an item that plays outside its playlist depends on Kodi's current playlist, which JSON-RPC doesn't report directly: if it is still that playlist (with no current entry), Kodi plays it from its first entry after the item (`PlayNext`); if there is none, Kodi stops. `VideoPlayer.PlaylistLength` (`MusicPlayer.PlaylistLength`) is only filled while that playlist is the current one, so Better Kodi notes it.
+  - Current playlist: the noted playlist is put back with `Playlist.Clear` and `Playlist.Add`, which leaves Kodi exactly there (current playlist, no current entry).
+  - None: JSON-RPC can't start an item outside its playlist (only add-ons, PVR and Kodi's own code can). Better Kodi inserts the noted entries in front of the reopened item, one `Playlist.Insert` per entry (Kodi moves its current entry by one per insert, also when one insert adds several entries), so the item is the last of them and Kodi stops after it. Once the item no longer plays (Kodi's notifications, otherwise checked every 10 s; each check runs like a command, so announcements and queue commands don't overlap with it), Better Kodi removes that entry again (`Playlist.Remove`; Kodi refuses only the playing entry). The entry is recognised by its place behind the noted entries, by the item and by how Kodi showed it after the start (add-on items show their resolved stream URL): if the entries in front of it changed, Better Kodi leaves the playlist alone and never removes an entry the user added. Entries added behind it stay. Until then the queue shows the item as its last noted entry; a Home Assistant restart meanwhile leaves the entry in the queue.
+  - Entries Kodi refuses to insert are left out, as Kodi would skip them when playing: library entries whose record is gone and local files that no longer exist (Kodi never refuses network paths and URLs; it skips unreachable ones when playing). If Kodi stops answering while the entries go back, the item's entry is still removed once Kodi answers and the item is over. Each tidy-up check runs only while Kodi answers and briefly; an announcement cancels a running check instead of waiting for it (it is repeated later).
+  - If the item doesn't start again or someone uses Kodi meanwhile, the playlist is put back as in the first case, so it isn't lost (Kodi then goes on with it after the item).
+  - Limit: with shuffle or repeat on for that playlist, inserting can't keep Kodi stopping after the item (Kodi reshuffles inserted entries, repeat goes on after the last). Better Kodi then puts the playlist back as in the first case, and Kodi goes on with it after the item.
+- A shuffled playlist that is put back is shuffled anew by Kodi (`Add` reshuffles). Better Kodi opens it with `shuffled: false` (Kodi's own order, which is the noted one) at the noted position and switches shuffle on again once it plays.
+- Kodi's idle time (`System.IdleTime(n)`, `XBMC.GetInfoBooleans`) is only reset by input (remote, keyboard, CEC, joystick, `Input.*` calls), not by `Player.*` calls. Better Kodi uses it to tell whether someone used Kodi.
+- Add-ons may ask "Resume from …" (Jellyfin for Kodi when transcoding). Better Kodi confirms the focused entry with `Input.Select` only if it shows the noted time (±3 s), whatever the language; otherwise it leaves dialogs alone.
+
+**Human override**: if, during the clip or while Kodi starts again, someone uses Kodi, stops the clip or starts something else, Better Kodi does not continue and does not switch Kodi off. The action succeeds (logged at info level).
+
+Announcements are serialized per Kodi. One that arrives during another plays next; the noted state is kept and Kodi continues once after the last. Commands from Home Assistant to the Better Kodi entity (play_media, forwarded controls, clear_playlist, the queue services, handover, call_method; also the link buttons and shared links, which use play_media) wait until the announcements are done, and an announcement waits for commands that are running before it notes Kodi's state. The announcer outlives a reload of the entry (saving the options), so the waiting still holds.
+
+If an announcement is cancelled (an automation restarted or stopped), Kodi still continues: the clip is stopped and the noted item opened again in the background, unless another announcement waits and does it. Continuing always runs in a task of its own (a Home Assistant background task), so cancelling the caller can't cut it short; announcements and commands wait until it is done.
+
+A command's own task doesn't wait for itself (a handover stopping playback); tasks it starts do wait.
+
+**Suspended Kodi**: with "Wake Kodi before sending", Better Kodi wakes Kodi, checks the mute, plays and switches Kodi off again with the configured command, but only if nothing plays, Kodi's idle time covers the time since waking, and no command was sent to Better Kodi meanwhile (the media player, its link buttons and maintenance buttons). The check runs with Kodi to itself like an announcement; a command that arrives during it is counted and stops the switch-off right before the power command. An announcement that arrives during it is played first, and the check runs again after it.
+
+Accepted limits: stopping close to the end may mark the video as watched; the clip can't be heard if the TV or receiver is off (not detectable); a Home Assistant restart during an announcement leaves the video stopped; shuffle, party mode and items that can't be opened again (DRM, disc menus) are best effort; if music wasn't playing, the music playlist's repeat stays off after the clip (Kodi only sets it on a player).
+
 ## Services
 
 | Service | Purpose |
 | --- | --- |
-| `media_player.play_media` | With `enqueue` and URL resolving as above |
+| `media_player.play_media` | With `enqueue` and URL resolving as above; with `announce` an announcement |
 | `media_player.clear_playlist` | Clears the video queue |
 | `better_kodi.get_queue` | Returns the queue with positions, titles and the current item |
 | `better_kodi.remove_from_queue` | Removes an item by position |

@@ -14,6 +14,9 @@ from custom_components.better_kodi.backends import (
     MediaSourceBackend,
 )
 from custom_components.better_kodi.const import (
+    CONF_ANNOUNCE_MAX_DURATION,
+    CONF_ANNOUNCE_START_TIMEOUT,
+    CONF_ANNOUNCE_VOLUME,
     CONF_BROADCAST,
     CONF_BROWSE_CHOICES,
     CONF_LINK_ENTITIES,
@@ -70,6 +73,7 @@ def power(**changes: Any) -> dict[str, Any]:
 
 
 SHARE = {CONF_SHARE_ENQUEUE: "add", CONF_SHARE_NOTIFY: True}
+ANNOUNCE = {CONF_ANNOUNCE_MAX_DURATION: 60.0, CONF_ANNOUNCE_START_TIMEOUT: 30.0}
 FEATURES = {CONF_BROWSE_CHOICES: False, CONF_LINK_ENTITIES: True, CONF_ONLINE_LOOKUPS: False}
 
 
@@ -92,7 +96,8 @@ async def test_options_flow_reads_the_mac_from_kodi(
     assert suggested(result, "power", CONF_MAC) == "AA:BB:CC:DD:EE:FF"
 
     result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {"power": power(), "share": SHARE, "features": FEATURES}
+        result["flow_id"],
+        {"power": power(), "share": SHARE, "announce": ANNOUNCE, "features": FEATURES},
     )
     await hass.async_block_till_done()
     assert result["type"] is FlowResultType.CREATE_ENTRY
@@ -119,19 +124,30 @@ async def test_options_flow_with_kodi_off(
     without_mac = power()
     del without_mac[CONF_MAC]
     result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {"power": without_mac, "share": SHARE, "features": FEATURES}
+        result["flow_id"],
+        {"power": without_mac, "share": SHARE, "announce": ANNOUNCE, "features": FEATURES},
     )
     assert result["errors"] == {"base": "mac_required"}
 
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
-        {"power": power(**{CONF_MAC: "nope"}), "share": SHARE, "features": FEATURES},
+        {
+            "power": power(**{CONF_MAC: "nope"}),
+            "share": SHARE,
+            "announce": ANNOUNCE,
+            "features": FEATURES,
+        },
     )
     assert result["errors"] == {"base": "invalid_mac"}
 
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
-        {"power": power(**{CONF_BROADCAST: "kodi.lan"}), "share": SHARE, "features": FEATURES},
+        {
+            "power": power(**{CONF_BROADCAST: "kodi.lan"}),
+            "share": SHARE,
+            "announce": ANNOUNCE,
+            "features": FEATURES,
+        },
     )
     assert result["errors"] == {"base": "invalid_broadcast"}
 
@@ -151,6 +167,7 @@ async def test_options_flow_keeps_defaults_and_allows_clearing_the_mac(
         {
             "power": automation,
             "share": SHARE,
+            "announce": ANNOUNCE,
             "features": {key: True for key in FEATURES},
         },
     )
@@ -347,6 +364,7 @@ async def test_old_options_are_upgraded_and_broadcast_is_trimmed(
         {
             "power": power(**{CONF_BROADCAST: " 192.168.1.255 "}),
             "share": SHARE,
+            "announce": ANNOUNCE,
             "features": FEATURES,
         },
     )
@@ -366,8 +384,42 @@ async def test_link_entities_switched_off_in_the_options_flow(
         {
             "power": power(**{CONF_POWER_ON: "automation"}),
             "share": SHARE,
+            "announce": ANNOUNCE,
             "features": {**FEATURES, CONF_LINK_ENTITIES: False},
         },
     )
     await hass.async_block_till_done()
     assert link_entities(hass, entry) == []
+
+
+async def test_announcement_options(hass: HomeAssistant, kodi_source: KodiSource) -> None:
+    entry = await setup_better_kodi(hass, kodi_source)
+
+    async def submit(announce: dict[str, Any]) -> dict[str, Any]:
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            {
+                "power": power(**{CONF_POWER_ON: "automation"}),
+                "share": SHARE,
+                "announce": announce,
+                "features": FEATURES,
+            },
+        )
+        await hass.async_block_till_done()
+        return result
+
+    result = await submit(
+        {**ANNOUNCE, CONF_ANNOUNCE_VOLUME: 35.0, CONF_ANNOUNCE_MAX_DURATION: 90.0}
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options[CONF_ANNOUNCE_VOLUME] == 35
+    assert entry.options[CONF_ANNOUNCE_MAX_DURATION] == 90
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    assert suggested(result, "announce", CONF_ANNOUNCE_VOLUME) == 35
+    hass.config_entries.options.async_abort(result["flow_id"])
+
+    result = await submit(ANNOUNCE)  # volume emptied: Kodi's own volume
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options[CONF_ANNOUNCE_VOLUME] is None

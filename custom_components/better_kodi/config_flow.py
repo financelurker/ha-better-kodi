@@ -29,6 +29,9 @@ from homeassistant.helpers import entity_registry as er, selector
 
 from . import client_from_entry_data
 from .const import (
+    CONF_ANNOUNCE_MAX_DURATION,
+    CONF_ANNOUNCE_START_TIMEOUT,
+    CONF_ANNOUNCE_VOLUME,
     CONF_BROADCAST,
     CONF_BROWSE_CHOICES,
     CONF_HIDE_SOURCE,
@@ -63,6 +66,7 @@ from .power import async_read_mac, normalize_mac
 SECTION_POWER = "power"
 SECTION_FEATURES = "features"
 SECTION_SHARE = "share"
+SECTION_ANNOUNCE = "announce"
 MAC_DETECT_TIMEOUT = 5
 CONNECTION_KEYS = (CONF_HOST, CONF_PORT, CONF_WS_PORT, CONF_USERNAME, CONF_PASSWORD, CONF_SSL)
 
@@ -313,8 +317,18 @@ class BetterKodiOptionsFlow(OptionsFlowWithReload):
         if user_input is not None:
             power = user_input.get(SECTION_POWER, {})
             share = user_input.get(SECTION_SHARE, {})
-            values = {**values, **power, **user_input.get(SECTION_FEATURES, {}), **share}
+            announce = user_input.get(SECTION_ANNOUNCE, {})
+            values = {
+                **values,
+                **power,
+                **user_input.get(SECTION_FEATURES, {}),
+                **share,
+                **announce,
+            }
             values[CONF_SHARE_DEVICES] = list(share.get(CONF_SHARE_DEVICES) or [])
+            # An emptied field is left out: Kodi's own volume
+            volume = announce.get(CONF_ANNOUNCE_VOLUME)
+            values[CONF_ANNOUNCE_VOLUME] = None if volume is None else round(volume)
             mac_text = (power.get(CONF_MAC) or "").strip()  # an emptied field is left out
             mac = normalize_mac(mac_text)
             values[CONF_MAC] = mac or mac_text
@@ -326,7 +340,12 @@ class BetterKodiOptionsFlow(OptionsFlowWithReload):
             if not errors and not _is_ipv4(values[CONF_BROADCAST]):
                 errors["base"] = "invalid_broadcast"
             if not errors:
-                values[CONF_WAKE_TIMEOUT] = int(values[CONF_WAKE_TIMEOUT])
+                for key in (
+                    CONF_WAKE_TIMEOUT,
+                    CONF_ANNOUNCE_MAX_DURATION,
+                    CONF_ANNOUNCE_START_TIMEOUT,
+                ):
+                    values[key] = int(values[key])
                 return self.async_create_entry(data={key: values[key] for key in DEFAULT_OPTIONS})
         elif not values[CONF_MAC]:
             values[CONF_MAC] = await self._async_detect_mac() or ""
@@ -422,10 +441,46 @@ class BetterKodiOptionsFlow(OptionsFlowWithReload):
                 ): selector.BooleanSelector(),
             }
         )
+
+        def seconds(low: int, high: int) -> selector.NumberSelector:
+            return selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=low,
+                    max=high,
+                    step=5,
+                    unit_of_measurement="s",
+                    mode=selector.NumberSelectorMode.BOX,
+                )
+            )
+
+        volume = values.get(CONF_ANNOUNCE_VOLUME)
+        announce = probatio.Schema(
+            {
+                probatio.Optional(
+                    CONF_ANNOUNCE_VOLUME,
+                    **({"description": {"suggested_value": volume}} if volume is not None else {}),
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        # A box can be left empty (a slider can't): Kodi's own volume
+                        min=0,
+                        max=100,
+                        step=1,
+                        mode=selector.NumberSelectorMode.BOX,
+                    )
+                ),
+                probatio.Required(
+                    CONF_ANNOUNCE_MAX_DURATION, default=values[CONF_ANNOUNCE_MAX_DURATION]
+                ): seconds(10, 600),
+                probatio.Required(
+                    CONF_ANNOUNCE_START_TIMEOUT, default=values[CONF_ANNOUNCE_START_TIMEOUT]
+                ): seconds(10, 120),
+            }
+        )
         return probatio.Schema(
             {
                 probatio.Required(SECTION_POWER): section(power),
                 probatio.Required(SECTION_SHARE): section(share),
+                probatio.Required(SECTION_ANNOUNCE): section(announce),
                 probatio.Required(SECTION_FEATURES): section(features),
             }
         )

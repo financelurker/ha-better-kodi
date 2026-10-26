@@ -24,6 +24,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.typing import ConfigType
 
 from . import backends
+from .announce import Announcer
 from .assist import transfer_exposure
 from .const import (
     CONF_HIDE_SOURCE,
@@ -51,6 +52,7 @@ _LOGGER = logging.getLogger(__name__)
 PLATFORMS = [Platform.MEDIA_PLAYER]
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 ADDON_CACHE_SECONDS = 600
+ANNOUNCERS = f"{DOMAIN}_announcers"  # per entry, kept across reloads
 NOTIFICATIONS = ("Playlist.", "Player.OnPlay", "Player.OnStop", "Player.OnAVStart")
 
 type BetterKodiConfigEntry = ConfigEntry[BetterKodiData]
@@ -63,6 +65,7 @@ class BetterKodiData:
 
     client: KodiClient
     queue: KodiQueue
+    announcer: Announcer
     source_entity_id: str
     web_session: aiohttp.ClientSession
     addons: frozenset[str] = frozenset()
@@ -71,6 +74,9 @@ class BetterKodiData:
     link: str = ""
     link_listeners: list[QueueListener] = field(default_factory=list)
     platforms: list[Platform] = field(default_factory=lambda: list(PLATFORMS))
+    # When Better Kodi woke Kodi for an announcement (to switch it off again afterwards)
+    woken_for_announcement: float | None = None
+    uses: int = 0  # counts commands from Home Assistant
 
     @property
     def backend_context(self) -> backends.BackendContext:
@@ -105,6 +111,11 @@ class BetterKodiData:
                 )
                 self.addons_loaded_at = time.monotonic()
         return self.addons
+
+    def mark_used(self) -> None:
+        """Kodi is used from Home Assistant: don't switch it off after an announcement."""
+        self.woken_for_announcement = None
+        self.uses += 1
 
     def notify_queue_changed(self) -> None:
         """Tell listeners (the entity) that the queue may have changed."""
@@ -172,6 +183,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: BetterKodiConfigEntry) -
     data = BetterKodiData(
         client=client,
         queue=KodiQueue(client, look_up_title, youtube_thumbnails=online_lookups),
+        announcer=_announcer(hass, entry, client),
         source_entity_id=source_entity_id,
         web_session=web_session,
     )
@@ -195,6 +207,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: BetterKodiConfigEntry) -
     entry.runtime_data = data
 
     def on_notification(method: str, payload: dict[str, Any]) -> None:
+        data.announcer.on_notification(method, payload)
         if method.startswith(NOTIFICATIONS):
             data.notify_queue_changed()
 
@@ -205,6 +218,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: BetterKodiConfigEntry) -
     )
     await hass.config_entries.async_forward_entry_setups(entry, data.platforms)
     return True
+
+
+def _announcer(hass: HomeAssistant, entry: ConfigEntry, client: KodiClient) -> Announcer:
+    """Return the entry's announcer; kept across reloads (options saved mid-announcement)."""
+    announcers: dict[str, Announcer] = hass.data.setdefault(ANNOUNCERS, {})
+    if (announcer := announcers.get(entry.entry_id)) is None:
+        announcer = announcers[entry.entry_id] = Announcer(
+            client,
+            create_task=lambda coro, name: hass.async_create_background_task(coro, name),
+        )
+    announcer.client = client  # same Kodi; a running announcement goes on with it
+    return announcer
 
 
 def _remove_switched_off_entities(
@@ -226,6 +251,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: BetterKodiConfigEntry) 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Give the Kodi entity back what Better Kodi took over."""
+    if (announcer := hass.data.get(ANNOUNCERS, {}).pop(entry.entry_id, None)) is not None:
+        announcer.close()
     registry = er.async_get(hass)
     source_entity_id = er.async_resolve_entity_id(registry, entry.data[CONF_SOURCE_ENTITY_UUID])
     if source_entity_id is None:

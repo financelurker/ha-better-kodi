@@ -71,6 +71,7 @@ class KodiClient:
             token = base64.b64encode(f"{username}:{password or ''}".encode()).decode()
             self._headers["Authorization"] = f"Basic {token}"
         self._ids = itertools.count(1)
+        self.notifications_connected = False
 
     @property
     def session(self) -> aiohttp.ClientSession:
@@ -159,6 +160,7 @@ class KodiClient:
                 async with self._session.ws_connect(url, heartbeat=30) as ws:
                     attempt = 0
                     _LOGGER.debug("Connected to %s", url)
+                    self.notifications_connected = True
                     async for message in ws:
                         if message.type is aiohttp.WSMsgType.TEXT:
                             self._dispatch(message.data, callback)
@@ -170,6 +172,7 @@ class KodiClient:
             except (aiohttp.ClientError, TimeoutError) as err:
                 _LOGGER.debug("WebSocket %s unavailable: %s", url, err)
             finally:
+                self.notifications_connected = False
                 delay = RECONNECT_DELAYS[min(attempt, len(RECONNECT_DELAYS) - 1)]
             attempt += 1
             await asyncio.sleep(delay)
