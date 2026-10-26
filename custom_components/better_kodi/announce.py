@@ -195,7 +195,13 @@ class Announcer:
         self._command_tasks: set[asyncio.Task[Any]] = set()
         self._session: Snapshot | None = None
         self._finishing: asyncio.Task[Outcome] | None = None
+        self._unawaited: set[asyncio.Task[Outcome]] = set()  # callers cancelled meanwhile
         self._listening: _Listening | None = None
+
+    @property
+    def queued(self) -> bool:
+        """Return True while an announcement waits for its turn."""
+        return self._waiting > 0
 
     @property
     def busy(self) -> bool:
@@ -217,7 +223,8 @@ class Announcer:
         if task in self._command_tasks:
             yield
             return
-        await self._idle.wait()
+        while not self._idle.is_set():  # another announcement may start right after one
+            await self._idle.wait()
         self._commands += 1
         self._no_commands.clear()
         if task is not None:
@@ -320,7 +327,13 @@ class Announcer:
         def done(task: asyncio.Task[Outcome]) -> None:
             if self._finishing is task:
                 self._finishing = None
-            if not task.cancelled() and (err := task.exception()) is not None and orphaned:
+            unawaited = task in self._unawaited
+            self._unawaited.discard(task)
+            if (
+                not task.cancelled()
+                and (err := task.exception()) is not None
+                and (orphaned or unawaited)
+            ):
                 _LOGGER.warning("Kodi could not continue after the announcement: %s", err)
             self._update_idle()
 
@@ -333,7 +346,7 @@ class Announcer:
         if await self._muted():
             _LOGGER.info("Kodi is muted; announcement %s not played", redact_url(url))
             if self._session is not None and not self._waiting:
-                await asyncio.shield(self._start_finish())  # an earlier announcement played
+                await self._await_finish(self._start_finish())  # an earlier announcement played
             return Outcome.MUTED
         if self._session is None:
             self._session = await self._snapshot()
@@ -360,10 +373,18 @@ class Announcer:
             return Outcome.OVERRIDE
         if self._waiting and clip_error is None:
             return Outcome.PASSED_ON
-        outcome = await asyncio.shield(self._start_finish())
+        outcome = await self._await_finish(self._start_finish())
         if clip_error is not None:
             raise clip_error
         return outcome
+
+    async def _await_finish(self, task: asyncio.Task[Outcome]) -> Outcome:
+        """Wait for Kodi to continue; if this caller is cancelled, the task goes on."""
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            self._unawaited.add(task)
+            raise
 
     async def _finish(self) -> Outcome:
         """Continue what played before the announcements."""
@@ -615,7 +636,12 @@ class Announcer:
             await self.client.call("Application.SetVolume", {"volume": session.volume})
 
     async def _put_back(
-        self, session: Snapshot, playlist_id: int, ours: list[dict[str, Any]]
+        self,
+        session: Snapshot,
+        playlist_id: int,
+        ours: list[dict[str, Any]],
+        *,
+        any_single: bool = False,
     ) -> None:
         """Put back a playlist that Kodi replaced when Better Kodi opened a single item.
 
@@ -625,7 +651,11 @@ class Announcer:
         if (saved := session.playlists.get(playlist_id)) is None:
             return  # it had entries that can't be added again
         current = await self._playlist(playlist_id)
-        if current is None or current == saved or not _same_items(current, ours):
+        if current is None or current == saved:
+            return
+        # Once an add-on item plays, Kodi may show it by its resolved path or
+        # library ID instead; a single entry is then still the reopened item.
+        if not (_same_items(current, ours) or (any_single and len(current) == 1)):
             return
         # Kodi handles both in order; clearing doesn't stop what plays.
         await self.client.call("Playlist.Clear", {"playlistid": playlist_id})
@@ -635,7 +665,9 @@ class Announcer:
 
     async def _put_back_after_clip(self, session: Snapshot) -> None:
         if session.clip is not None:
-            await self._put_back(session, MUSIC_PLAYLIST, [{"file": session.clip}])
+            # An audio clip replaces the music playlist, a video clip the queue.
+            for playlist_id in PLAYLISTS:
+                await self._put_back(session, playlist_id, [{"file": session.clip}])
 
     async def _stop_clip(self, session: Snapshot) -> None:
         """Stop the clip if it still plays (a cancelled announcement)."""
@@ -690,7 +722,7 @@ class Announcer:
                 # Kodi plays the item from the playlist it replaced; put the old one
                 # back (Kodi continues with it after the item, like after any entry).
                 with contextlib.suppress(KodiError):
-                    await self._put_back(session, replaced, [playback.item])
+                    await self._put_back(session, replaced, [playback.item], any_single=True)
         if player_id is None:
             return Outcome.OVERRIDE
         if playback.kind != "channel" and playback.seconds:

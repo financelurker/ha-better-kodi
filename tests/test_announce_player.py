@@ -293,3 +293,26 @@ async def test_command_while_switching_off_keeps_kodi_on(hass: HomeAssistant, as
     await task
     assert "System.Suspend" not in kodi.method_calls()
     assert kodi.files() == ["https://cdn.example/b.mp4"]
+
+
+async def test_announcement_during_the_switch_off_check(hass: HomeAssistant, asleep) -> None:
+    """A second announcement while Better Kodi decides to switch Kodi off again."""
+    _, player, kodi, _ = asleep
+    deciding = asyncio.Event()
+    call = kodi.call
+
+    async def slow_capability_check(method: str, params: Any = None) -> Any:
+        if method == "System.GetProperties" and not deciding.is_set():
+            deciding.set()
+            await asyncio.sleep(0.3)
+        return await call(method, params)
+
+    kodi.call = slow_capability_check
+    first = hass.async_create_task(announce_media(hass, player))
+    await deciding.wait()
+    await announce_media(hass, player, "http://ha.local:8123/api/tts_proxy/def.mp3")
+    await first
+    assert len(kodi.clips) == 2
+    methods = kodi.method_calls()
+    assert methods.count("System.Suspend") == 1  # once, after the second announcement
+    assert methods.index("System.Suspend") > len(methods) - 1 - methods[::-1].index("Player.Open")

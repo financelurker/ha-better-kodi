@@ -53,6 +53,7 @@ class FakeKodi:
         self.clip_starts = True
         self._clip: tuple[str, float] | None = None  # (file, started)
         self.clips: list[str] = []
+        self.video_clips: set[str] = set()  # files that play as a short video clip
         self.idle_since = time.monotonic() - 3600
         self.audio_streams: list[dict[str, Any]] = []
         self.audio_index = 0
@@ -309,6 +310,14 @@ class FakeKodi:
                 return "OK"  # added, but the player fails
             self._clip = (file, time.monotonic())
             self.player_type, self.position, self.player_active = "audio", 0, True
+            self._emit("Player.OnPlay")
+            self._emit("Player.OnAVStart")
+            return "OK"
+        if file in self.video_clips:
+            self.playlist[:] = [self._to_playlist_item(item)]
+            self.clips.append(file)
+            self._clip = (file, time.monotonic())
+            self.player_type, self.position, self.player_active = "video", 0, True
             self._emit("Player.OnPlay")
             self._emit("Player.OnAVStart")
             return "OK"

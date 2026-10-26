@@ -410,6 +410,40 @@ async def test_tasks_started_by_a_command_wait_for_announcements(
     assert seen == [True, False]
 
 
+async def test_video_clip_leaves_the_queue_alone(kodi: FakeKodi, announcer: Announcer) -> None:
+    doorbell = "http://ha.local:8123/local/doorbell.mp4"
+    kodi.video_clips = {doorbell}
+    queue = kodi.files()
+    assert await announcer.announce(doorbell) is Outcome.DONE
+    assert kodi.clips == [doorbell]
+    assert kodi.files() == queue
+    assert kodi.position == 1
+    assert kodi.time == AT_42_17
+
+
+async def test_a_command_doesnt_slip_between_two_announcements(
+    kodi: FakeKodi, announcer: Announcer
+) -> None:
+    """Two announcements in a row from one script; a command waits for both."""
+    log: list[str] = []
+
+    async def script() -> None:
+        await announcer.announce(CLIP)
+        log.append("first done")
+        await announcer.announce(CLIP_2)
+        log.append("second done")
+
+    async def command() -> None:
+        async with announcer.command():
+            log.append(f"command, busy={announcer.busy}")
+
+    running = asyncio.ensure_future(script())
+    await asyncio.sleep(0.1)
+    waiting = asyncio.ensure_future(command())
+    await asyncio.gather(running, waiting)
+    assert "command, busy=True" not in log
+
+
 def test_streams_are_found_by_language_and_name() -> None:
     german = Stream(1, "ger", "Deutsch 5.1")
     assert german.find_in(AUDIO) == 1

@@ -628,37 +628,45 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
         """Switch Kodi off again if it was woken for announcements and nobody uses it.
 
         Runs with Kodi to itself, like an announcement: a command sent now
-        waits, and one sent since the wake keeps Kodi on.
+        waits, and one sent since the wake keeps Kodi on. An announcement that
+        arrives meanwhile switches Kodi off after itself instead.
         """
         announcer = self._data.announcer
         if self._data.woken_for_announcement is None or announcer.busy:
             return  # not woken for this, or the next announcement switches off
         async with announcer.exclusive():
-            if (woken_at := self._data.woken_for_announcement) is None:
+            if (woken_at := self._data.woken_for_announcement) is None or announcer.queued:
                 return
-            self._data.woken_for_announcement = None
             uses = self._data.uses
+            self._data.woken_for_announcement = None
+
+            def unused() -> bool:
+                return self._data.uses == uses and not announcer.queued
+
             try:
-                players = await self._data.client.call("Player.GetActivePlayers") or []
-                seconds = int(time.monotonic() - woken_at) - 1
-                idle_since_wake = True
-                if seconds >= 1:
-                    condition = f"System.IdleTime({seconds})"
-                    result = await self._data.client.call(
-                        "XBMC.GetInfoBooleans", {"booleans": [condition]}
-                    )
-                    idle_since_wake = (result or {}).get(condition) is not False
+                if await self._async_idle_since(woken_at) and unused():
+                    _LOGGER.debug("Switching Kodi off again after the announcement")
+                    await self._async_switch_off(still_wanted=unused)
+                else:
+                    _LOGGER.debug("Kodi is in use; not switching it off after the announcement")
             except KodiError as err:
                 _LOGGER.debug("Not switching Kodi off after the announcement: %s", err)
-                return
-            if players or not idle_since_wake or self._data.uses != uses:
-                _LOGGER.debug("Kodi is in use; not switching it off after the announcement")
-                return
-            _LOGGER.debug("Switching Kodi off again after the announcement")
-            try:
-                await self._async_switch_off(still_wanted=lambda: self._data.uses == uses)
             except HomeAssistantError as err:
                 _LOGGER.warning("Could not switch Kodi off after the announcement: %s", err)
+            finally:
+                if announcer.queued and self._data.uses == uses:
+                    self._data.woken_for_announcement = woken_at  # the next one decides
+
+    async def _async_idle_since(self, since: float) -> bool:
+        """Return True if nothing plays and nobody used Kodi since then."""
+        if await self._data.client.call("Player.GetActivePlayers"):
+            return False
+        seconds = int(time.monotonic() - since) - 1
+        if seconds < 1:
+            return True
+        condition = f"System.IdleTime({seconds})"
+        result = await self._data.client.call("XBMC.GetInfoBooleans", {"booleans": [condition]})
+        return (result or {}).get(condition) is not False
 
     async def _async_media_source_item(self, url: str) -> dict[str, Any]:
         """Return the best Kodi item for a resolved media source URL (see backends)."""
