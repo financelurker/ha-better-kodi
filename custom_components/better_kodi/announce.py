@@ -9,7 +9,7 @@ Like queue.py, this module only talks to Kodi through KodiClient.
 """
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 import contextlib
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -31,11 +31,18 @@ VIDEO_PLAYLIST = 1
 PLAYLISTS = (MUSIC_PLAYLIST, VIDEO_PLAYLIST)
 POLL_INTERVAL = 0.25
 IDLE_CHECK_INTERVAL = 1.0
-# Kodi reports time in whole steps and answers a little late: a clip that
-# stopped this close to its end ended by itself.
-END_TOLERANCE = 1.5
+# Without notifications, the end of a clip is judged from Kodi's time, which
+# is a poll old: a clip that stopped this close to its end ended by itself.
+END_TOLERANCE = 2.5
+# With notifications, how long to wait for Kodi's "stopped" after the player is gone
+STOP_NOTIFICATION_WAIT = 2.0
+# Without notifications, a clip in the music playlist with no player for this
+# long has played already (shorter than a poll).
+UNSEEN_CLIP_GRACE = 3.0
 SEEK_TOLERANCE = 3.0
 SEEK_TIMEOUT = 15.0
+STREAMS_TIMEOUT = 10.0
+STOP_TIMEOUT = 5.0
 DIALOG_TIME_TOLERANCE = 3
 TIME_IN_TEXT = re.compile(r"(?<!\d)(?:(\d{1,2}):)?(\d{1,2}):(\d{2})(?!\d)")
 STREAM_PROPERTIES = [
@@ -94,9 +101,11 @@ class Stream:
         stream URL), so language and name decide; the index is the fallback.
         """
         streams = [s for raw in raw_streams or [] if (s := Stream.from_kodi(raw)) is not None]
-        for stream in streams:
-            if (stream.language, stream.name) == (self.language, self.name):
-                return stream.index
+        same = [s for s in streams if (s.language, s.name) == (self.language, self.name)]
+        if any(stream.index == self.index for stream in same):
+            return self.index  # several alike (two unnamed English subtitles): the noted one
+        if same:
+            return same[0].index
         if self.language:
             same_language = [s for s in streams if s.language == self.language]
             if len(same_language) == 1:
@@ -123,20 +132,23 @@ class Playback:
 
     @property
     def seconds(self) -> int:
-        """Return the noted time in seconds."""
-        return _seconds(self.time)
+        """Return the noted time in whole seconds."""
+        return int(_seconds(self.time))
 
 
 @dataclass(slots=True)
 class Snapshot:
-    """Kodi before an announcement."""
+    """Kodi before an announcement, and what the announcements changed."""
 
     volume: int | None
     playback: Playback | None
-    # Saved playlists (portable items). Kodi empties the playlist of an item it
-    # is asked to open on its own; Better Kodi fills an emptied one again.
+    # Saved playlists (portable items). Kodi replaces the playlist of an item
+    # it is asked to open on its own with that item; Better Kodi puts them back.
     playlists: dict[int, list[dict[str, Any]]] = field(default_factory=dict)
     volume_set: int | None = None  # what Better Kodi set for the clip
+    clip: str | None = None  # the last clip Better Kodi opened
+    music_repeat: str | None = None  # the music playlist's repeat, switched off for the clip
+    start_timeout: float = 30
 
 
 @dataclass(slots=True)
@@ -150,7 +162,12 @@ class _Listening:
 
 
 class Announcer:
-    """Play announcements on one Kodi, one at a time."""
+    """Play announcements on one Kodi, one at a time.
+
+    Commands from Home Assistant (see command()) and announcements don't
+    overlap: commands wait for announcements, and an announcement waits for
+    running commands before it notes what Kodi plays.
+    """
 
     def __init__(self, client: KodiClient, *, clock: Clock = time.monotonic) -> None:
         """Initialize with a Kodi client."""
@@ -160,8 +177,12 @@ class Announcer:
         self._waiting = 0
         self._idle = asyncio.Event()
         self._idle.set()
+        self._commands = 0
+        self._no_commands = asyncio.Event()
+        self._no_commands.set()
         self._session: Snapshot | None = None
         self._listening: _Listening | None = None
+        self._tasks: set[asyncio.Task[None]] = set()
 
     @property
     def busy(self) -> bool:
@@ -171,6 +192,24 @@ class Announcer:
     async def wait_idle(self) -> None:
         """Wait until no announcement runs or waits."""
         await self._idle.wait()
+
+    @contextlib.asynccontextmanager
+    async def command(self) -> AsyncIterator[None]:
+        """Run a command after the announcements; announcements wait for it."""
+        await self._idle.wait()
+        self._commands += 1
+        self._no_commands.clear()
+        try:
+            yield
+        finally:
+            self._commands -= 1
+            if not self._commands:
+                self._no_commands.set()
+
+    @property
+    def _notifications(self) -> bool:
+        """Return True if Kodi's notifications arrive (WebSocket connected)."""
+        return bool(getattr(self.client, "notifications_connected", False))
 
     def on_notification(self, method: str, data: dict[str, Any]) -> None:
         """Take Kodi's notifications (over WebSocket), to react without polling delay."""
@@ -198,29 +237,73 @@ class Announcer:
         """Play a clip as an announcement and continue afterwards.
 
         Announcements that arrive meanwhile play one after another; Kodi
-        continues after the last one.
+        continues after the last one. If an announcement is cancelled, Kodi
+        still continues (in the background).
         """
         self._waiting += 1
         self._idle.clear()
+        acquired = False
         try:
             async with self._lock:
+                acquired = True
                 self._waiting -= 1
-                return await self._announce(url, volume, max_duration, start_timeout)
+                try:
+                    return await self._announce(url, volume, max_duration, start_timeout)
+                except BaseException:
+                    # Cancelled or failed unexpectedly: don't keep a stale snapshot.
+                    if self._session is not None and not self._waiting:
+                        self._finish_in_background()
+                    raise
         finally:
-            if self._waiting == 0 and not self._lock.locked():
-                self._idle.set()
+            if not acquired:
+                self._waiting -= 1
+                if self._session is not None and not self._waiting and not self._lock.locked():
+                    self._finish_in_background()  # the one before passed on to this one
+            self._update_idle()
+
+    def _update_idle(self) -> None:
+        if self._waiting == 0 and not self._lock.locked():
+            self._idle.set()
+
+    def _finish_in_background(self) -> None:
+        """Continue playback after a cancelled announcement."""
+        self._waiting += 1  # counted at once, so nothing slips in before it
+        self._idle.clear()
+        task = asyncio.get_running_loop().create_task(self._finish_orphaned())
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    async def _finish_orphaned(self) -> None:
+        acquired = False
+        try:
+            async with self._lock:
+                acquired = True
+                self._waiting -= 1
+                if self._session is not None and not self._waiting:
+                    try:
+                        await self._finish()
+                    except (AnnounceError, KodiError) as err:
+                        _LOGGER.warning(
+                            "Kodi could not continue after a cancelled announcement: %s", err
+                        )
+        finally:
+            if not acquired:
+                self._waiting -= 1
+            self._update_idle()
 
     async def _announce(
         self, url: str, volume: int | None, max_duration: float, start_timeout: float
     ) -> Outcome:
-        if (muted := await self._muted()) is not None and muted:
+        if await self._muted():
             _LOGGER.info("Kodi is muted; announcement %s not played", redact_url(url))
             if self._session is not None and not self._waiting:
-                await self._finish(start_timeout)  # an earlier announcement played
+                await self._finish()  # an earlier announcement played
             return Outcome.MUTED
         if self._session is None:
+            await self._no_commands.wait()
             self._session = await self._snapshot()
         session = self._session
+        session.start_timeout = start_timeout
         clip_error: Exception | None = None
         override = False
         try:
@@ -228,7 +311,7 @@ class Announcer:
                 volume = max(0, min(100, int(volume)))
                 await self.client.call("Application.SetVolume", {"volume": volume})
                 session.volume_set = volume
-            override = await self._play_clip(url, max_duration, start_timeout)
+            override = await self._play_clip(session, url, max_duration, start_timeout)
         except (ClipError, KodiError) as err:
             clip_error = err
         if override:
@@ -236,30 +319,31 @@ class Announcer:
                 "Kodi was used during the announcement; Better Kodi doesn't continue playback"
             )
             self._session = None
-            await self._restore_volume(session)
+            with contextlib.suppress(KodiError):
+                await self._restore_volume(session)
             return Outcome.OVERRIDE
         if self._waiting and clip_error is None:
             return Outcome.PASSED_ON
-        outcome = await self._finish(start_timeout)
+        outcome = await self._finish()
         if clip_error is not None:
             raise clip_error
         return outcome
 
-    async def _finish(self, start_timeout: float) -> Outcome:
+    async def _finish(self) -> Outcome:
         """Continue what played before the announcements."""
         session, self._session = self._session, None
         assert session is not None
-        await self._restore_volume(session)
         try:
-            return await self._restore(session, start_timeout)
+            await self._restore_volume(session)
+            return await self._restore(session)
         except KodiError as err:
             raise RestoreError(str(err)) from err
 
     # --- Before ------------------------------------------------------------------
 
-    async def _muted(self) -> bool | None:
+    async def _muted(self) -> bool:
         result = await self.client.call("Application.GetProperties", {"properties": ["muted"]})
-        return (result or {}).get("muted")
+        return bool((result or {}).get("muted"))
 
     async def _snapshot(self) -> Snapshot:
         app = await self.client.call("Application.GetProperties", {"properties": ["volume"]})
@@ -328,61 +412,126 @@ class Announcer:
         found.sort(key=lambda player: player[1] != "video")
         return found[0] if found else None
 
-    async def _playing_file(self, player_id: int) -> str | None:
+    async def _playing_item(self, player_id: int) -> dict[str, Any] | None:
         try:
             result = await self.client.call(
                 "Player.GetItem", {"playerid": player_id, "properties": ["file"]}
             )
         except KodiRpcError:
             return None  # the player stopped meanwhile
-        return ((result or {}).get("item") or {}).get("file") or None
+        return (result or {}).get("item") or {}
+
+    async def _playing_file(self, player_id: int) -> str | None:
+        return ((await self._playing_item(player_id)) or {}).get("file") or None
 
     # --- The clip ------------------------------------------------------------------
 
-    async def _play_clip(self, url: str, max_duration: float, start_timeout: float) -> bool:
+    async def _play_clip(
+        self, session: Snapshot, url: str, max_duration: float, start_timeout: float
+    ) -> bool:
         """Play the clip until it ends; return True if someone used Kodi meanwhile."""
         listening = self._listening = _Listening()
         try:
+            opened_at = self._clock()
+            session.clip = url
             await self.client.call("Player.Open", {"item": {"file": url}})
-            start_deadline = self._clock() + start_timeout
-            started_at: float | None = None
-            remaining: float | None = None
-            next_idle_check = 0.0
-            while True:
-                await self._tick(listening)
-                now = self._clock()
-                if started_at is None:
-                    player = await self._active_player()
-                    if player is not None and _same_file(await self._playing_file(player[0]), url):
-                        started_at = next_idle_check = now
-                    elif listening.stopped:
-                        return listening.ended is False  # over before it was seen playing
-                    elif now >= start_deadline:
-                        raise ClipError(f"Kodi did not play {redact_url(url)}")
-                    continue
-                if listening.stopped:
-                    return listening.ended is False
-                player = await self._active_player()
-                if player is None:
-                    # Without notifications: stopped well before its end means someone stopped it.
-                    return remaining is not None and remaining > END_TOLERANCE
-                if not _same_file(await self._playing_file(player[0]), url):
-                    return True  # someone started something else
-                remaining = await self._remaining(player[0])
-                if now - started_at >= max_duration:
-                    _LOGGER.warning(
-                        "Announcement %s still plays after %s s; stopping it",
-                        redact_url(url),
-                        max_duration,
-                    )
-                    await self.client.call("Player.Stop", {"playerid": player[0]})
-                    return False
-                if now >= next_idle_check:
-                    next_idle_check = now + IDLE_CHECK_INTERVAL
-                    if await self._used_since(started_at):
-                        return True
+            if not await self._wait_for_clip(session, listening, url, opened_at, start_timeout):
+                return await self._used_since(opened_at)  # played before it was seen
+            override = await self._wait_for_clip_end(listening, url, opened_at, max_duration)
+            # Input in the last moments of the clip counts too.
+            return override or await self._used_since(opened_at)
         finally:
             self._listening = None
+
+    async def _wait_for_clip(
+        self,
+        session: Snapshot,
+        listening: _Listening,
+        url: str,
+        opened_at: float,
+        start_timeout: float,
+    ) -> bool:
+        """Wait until the clip plays; False if it played and ended before that was seen."""
+        deadline = opened_at + start_timeout
+        unseen_since: float | None = None
+        while True:
+            await self._tick(listening)
+            now = self._clock()
+            player = await self._active_player()
+            if player is not None and _same_file(await self._playing_file(player[0]), url):
+                await self._repeat_off(session, player[0])
+                return True
+            if listening.stopped:
+                return False
+            if player is None and not self._notifications and await self._clip_queued(url):
+                # Kodi puts the clip into the music playlist and plays it from there.
+                # Without notifications, a clip shorter than a poll is never seen
+                # playing: no player for a while means it is over.
+                unseen_since = unseen_since if unseen_since is not None else now
+                if now - unseen_since >= UNSEEN_CLIP_GRACE:
+                    return False
+            else:
+                unseen_since = None
+            if now >= deadline:
+                raise ClipError(f"Kodi did not play {redact_url(url)}")
+
+    async def _wait_for_clip_end(
+        self, listening: _Listening, url: str, opened_at: float, max_duration: float
+    ) -> bool:
+        """Wait until the clip is over; return True if someone stopped it or used Kodi."""
+        started_at = self._clock()
+        next_idle_check = started_at + IDLE_CHECK_INTERVAL
+        remaining: float | None = None
+        gone_since: float | None = None
+        while True:
+            await self._tick(listening)
+            now = self._clock()
+            if listening.stopped:
+                return listening.ended is False
+            player = await self._active_player()
+            if player is None:
+                if self._notifications:
+                    # Kodi's "stopped" (with "end") is on its way; wait for it a little.
+                    gone_since = gone_since if gone_since is not None else now
+                    if now - gone_since < STOP_NOTIFICATION_WAIT:
+                        continue
+                    return False
+                # Without notifications: stopped well before its end means someone stopped it.
+                return remaining is not None and remaining > END_TOLERANCE
+            if not _same_file(await self._playing_file(player[0]), url):
+                return True  # someone started something else
+            remaining = await self._remaining(player[0])
+            if now - started_at >= max_duration:
+                _LOGGER.warning(
+                    "Announcement %s still plays after %s s; stopping it",
+                    redact_url(url),
+                    max_duration,
+                )
+                await self.client.call("Player.Stop", {"playerid": player[0]})
+                return False
+            if now >= next_idle_check:
+                next_idle_check = now + IDLE_CHECK_INTERVAL
+                if await self._used_since(opened_at):
+                    return True
+
+    async def _clip_queued(self, url: str) -> bool:
+        result = await self.client.call(
+            "Playlist.GetItems", {"playlistid": MUSIC_PLAYLIST, "properties": ["file"]}
+        )
+        items = (result or {}).get("items") or []
+        return len(items) == 1 and _same_file(items[0].get("file"), url)
+
+    async def _repeat_off(self, session: Snapshot, player_id: int) -> None:
+        """Play the clip once: repeat of the music playlist would loop it."""
+        with contextlib.suppress(KodiRpcError):
+            props = await self.client.call(
+                "Player.GetProperties", {"playerid": player_id, "properties": ["repeat"]}
+            )
+            repeat = (props or {}).get("repeat")
+            if repeat in ("one", "all"):
+                await self.client.call("Player.SetRepeat", {"playerid": player_id, "repeat": "off"})
+                if session.music_repeat is None:
+                    session.music_repeat = repeat
 
     async def _tick(self, listening: _Listening) -> None:
         """Wait for the next poll, or less if Kodi notified something."""
@@ -427,19 +576,36 @@ class Announcer:
         if (app or {}).get("volume") == session.volume_set:  # not changed by someone meanwhile
             await self.client.call("Application.SetVolume", {"volume": session.volume})
 
-    async def _refill_playlists(self, session: Snapshot) -> None:
-        """Fill playlists again that Kodi emptied when it opened a single item."""
-        for playlist_id, items in session.playlists.items():
-            if not items:
+    async def _restore_playlists(self, session: Snapshot, *playlist_ids: int) -> None:
+        """Put back playlists that Kodi replaced when it opened a single item."""
+        for playlist_id in playlist_ids:
+            if (saved := session.playlists.get(playlist_id)) is None:
+                continue  # it had entries that can't be added again
+            if await self._playlist(playlist_id) == saved:
                 continue
-            size = await self.client.call(
-                "Playlist.GetProperties", {"playlistid": playlist_id, "properties": ["size"]}
-            )
-            if int((size or {}).get("size", 0)) == 0:
-                await self.client.call("Playlist.Add", {"playlistid": playlist_id, "item": items})
+            # Kodi handles both in order; clearing doesn't stop what plays.
+            await self.client.call("Playlist.Clear", {"playlistid": playlist_id})
+            if saved:
+                await self.client.call("Playlist.Add", {"playlistid": playlist_id, "item": saved})
 
-    async def _restore(self, session: Snapshot, start_timeout: float) -> Outcome:
-        await self._refill_playlists(session)
+    async def _stop_clip(self, session: Snapshot) -> None:
+        """Stop the clip if it still plays (a cancelled announcement)."""
+        if session.clip is None or (player := await self._active_player()) is None:
+            return
+        if not _same_file(await self._playing_file(player[0]), session.clip):
+            return
+        await self.client.call("Player.Stop", {"playerid": player[0]})
+        listening = self._listening = _Listening(started=True)
+        try:
+            deadline = self._clock() + STOP_TIMEOUT
+            while await self._active_player() is not None and self._clock() < deadline:
+                await self._tick(listening)
+        finally:
+            self._listening = None
+
+    async def _restore(self, session: Snapshot) -> Outcome:
+        await self._stop_clip(session)
+        await self._restore_playlists(session, *PLAYLISTS)
         playback = session.playback
         if playback is None:
             return Outcome.DONE
@@ -458,21 +624,33 @@ class Announcer:
                 params["options"] = {"resume": playback.time}
             await self.client.call("Player.Open", params)
 
-        player_id = await self._wait_for_start(playback, start_timeout)
+        player_id = await self._wait_for_start(playback, session.start_timeout)
         if player_id is None:
             return Outcome.OVERRIDE
-        if playback.kind == "item":
-            await self._refill_playlists(session)  # opening one video empties the queue
+        if playback.kind != "playlist":
+            # Opening a single item replaced its playlist (the queue) with it.
+            await self._restore_playlists(session, *PLAYLISTS)
         if playback.kind != "channel" and playback.seconds:
             await self._seek(player_id, playback)
-        if playback.audio or playback.subtitle or playback.subtitle_enabled is not None:
+        if playback.audio or playback.subtitle:
             await self._restore_streams(player_id, playback)
+        if (
+            playback.kind == "playlist"
+            and playback.playlist_id == MUSIC_PLAYLIST
+            and session.music_repeat is not None
+        ):
+            await _try(
+                self.client.call(
+                    "Player.SetRepeat",
+                    {"playerid": player_id, "repeat": session.music_repeat},
+                )
+            )
         if playback.paused:
             await self.client.call("Player.PlayPause", {"playerid": player_id, "play": False})
         return Outcome.DONE
 
     async def _wait_for_start(self, playback: Playback, start_timeout: float) -> int | None:
-        """Wait until Kodi plays again; answer its resume dialog if it shows one.
+        """Wait until Kodi plays the noted item again; answer its resume dialog.
 
         Returns the player ID, or None if someone used Kodi meanwhile.
         """
@@ -484,10 +662,11 @@ class Announcer:
             while True:
                 await self._tick(listening)
                 player = await self._active_player()
-                if player is not None:
+                if player is not None and await self._plays_noted(player[0], playback):
                     return player[0]
                 if (
-                    not answered
+                    player is None
+                    and not answered
                     and playback.seconds
                     and await self._answer_resume_dialog(playback.seconds)
                 ):
@@ -504,6 +683,30 @@ class Announcer:
                     )
         finally:
             self._listening = None
+
+    async def _plays_noted(self, player_id: int, playback: Playback) -> bool:
+        """Return True if the player plays the noted item.
+
+        A single item can't be compared reliably (add-ons resolve their paths
+        to stream URLs), so it counts; someone starting something else is
+        caught by the input check.
+        """
+        if playback.kind == "playlist":
+            try:
+                props = await self.client.call(
+                    "Player.GetProperties",
+                    {"playerid": player_id, "properties": ["playlistid", "position"]},
+                )
+            except KodiRpcError:
+                return False
+            return (props.get("playlistid"), props.get("position")) == (
+                playback.playlist_id,
+                playback.position,
+            )
+        if playback.kind == "channel":
+            item = await self._playing_item(player_id) or {}
+            return item.get("type") == "channel" and {"channelid": item.get("id")} == playback.item
+        return True
 
     async def _answer_resume_dialog(self, seconds: int) -> bool:
         """Choose "Resume from …" in a dialog, if one offers exactly the noted time.
@@ -552,15 +755,24 @@ class Announcer:
         """Choose the same audio track and subtitle again.
 
         Kodi remembers them per file itself; this covers streams whose address
-        changes (add-ons, media servers).
+        changes (add-ons, media servers). Kodi lists the streams only once the
+        stream is open, so this waits for them a while.
         """
-        try:
-            props = await self.client.call(
-                "Player.GetProperties",
-                {"playerid": player_id, "properties": STREAM_PROPERTIES},
-            )
-        except KodiRpcError:
-            return
+        deadline = self._clock() + STREAMS_TIMEOUT
+        while True:
+            try:
+                props = await self.client.call(
+                    "Player.GetProperties",
+                    {"playerid": player_id, "properties": STREAM_PROPERTIES},
+                )
+            except KodiRpcError:
+                return
+            if props.get("audiostreams") or props.get("subtitles"):
+                break
+            if self._clock() >= deadline:
+                _LOGGER.debug("Kodi listed no audio tracks or subtitles; leaving them")
+                return
+            await asyncio.sleep(POLL_INTERVAL)
         await _try(self._set_audio(player_id, playback, props))
         await _try(self._set_subtitle(player_id, playback, props))
 
@@ -598,7 +810,7 @@ class Announcer:
             )
 
 
-async def _try(operation: Awaitable[None]) -> None:
+async def _try(operation: Awaitable[Any]) -> None:
     """Run a finishing touch; a refusal must not fail the announcement."""
     try:
         await operation
@@ -606,10 +818,15 @@ async def _try(operation: Awaitable[None]) -> None:
         _LOGGER.debug("Kodi refused: %s", err)
 
 
-def _seconds(value: dict[str, int] | None) -> int:
+def _seconds(value: dict[str, int] | None) -> float:
     if not value:
         return 0
-    return value.get("hours", 0) * 3600 + value.get("minutes", 0) * 60 + value.get("seconds", 0)
+    return (
+        value.get("hours", 0) * 3600
+        + value.get("minutes", 0) * 60
+        + value.get("seconds", 0)
+        + value.get("milliseconds", 0) / 1000
+    )
 
 
 def _same_file(playing: str | None, url: str) -> bool:

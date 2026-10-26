@@ -251,7 +251,7 @@ What happens:
 
 - **Kodi is muted**: muted means muted. Nothing is interrupted and the clip isn't played (no error).
 - **Kodi is suspended**: with **Wake Kodi before sending** on, Better Kodi wakes Kodi, plays the clip and switches Kodi off again, unless something plays by then or someone used Kodi meanwhile.
-- **Several announcements at once** play one after the other; Kodi continues after the last one. Other commands for this Kodi from Home Assistant wait until then.
+- **Several announcements at once** play one after the other; Kodi continues after the last one. Other commands to Better Kodi's media player (play, pause, links, queue services, handover) wait until then.
 - **Someone uses Kodi during the announcement** (remote, keyboard, CEC, stops the clip or starts something else): Better Kodi leaves Kodi alone and doesn't continue the interrupted item, and doesn't switch Kodi off. That's not an error.
 - **Kodi can't continue** (for example a stream that is gone): the action reports an error.
 

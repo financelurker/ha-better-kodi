@@ -222,3 +222,44 @@ async def test_not_switched_off_when_someone_uses_kodi(hass: HomeAssistant, asle
     kodi.user_plays(MOVIE)  # someone starts a movie right away
     await task
     assert "System.Suspend" not in kodi.method_calls()
+
+
+async def test_command_after_waking_keeps_kodi_on(hass: HomeAssistant, asleep) -> None:
+    """A link sent while the wake-up announcement plays: Kodi stays on for it."""
+    _, player, kodi, _ = asleep
+    kodi.clip_length = 0.6
+    task = hass.async_create_task(announce_media(hass, player))
+    await asyncio.sleep(0.3)
+    await hass.services.async_call(
+        MP_DOMAIN,
+        "play_media",
+        {
+            ATTR_ENTITY_ID: player,
+            ATTR_MEDIA_CONTENT_ID: "https://cdn.example/b.mp4",
+            ATTR_MEDIA_CONTENT_TYPE: "url",
+        },
+        blocking=True,
+    )
+    await task
+    assert "System.Suspend" not in kodi.method_calls()
+    assert kodi.files() == ["https://cdn.example/b.mp4"]
+
+
+async def test_clear_playlist_waits_for_the_announcement(hass: HomeAssistant, playing) -> None:
+    _, player, kodi = playing
+    kodi.clip_length = 0.6
+    task = hass.async_create_task(announce_media(hass, player))
+    await asyncio.sleep(0.2)
+    await hass.services.async_call(
+        MP_DOMAIN, "clear_playlist", {ATTR_ENTITY_ID: player}, blocking=True
+    )
+    await task
+    assert kodi.files() == []  # cleared after the queue was put back, not before
+
+
+async def test_saving_options_keeps_the_announcer(hass: HomeAssistant, playing) -> None:
+    entry, _, _ = playing
+    announcer = entry.runtime_data.announcer
+    await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert entry.runtime_data.announcer is announcer

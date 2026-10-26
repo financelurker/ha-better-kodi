@@ -59,7 +59,10 @@ class FakeKodi:
         self.subtitles: list[dict[str, Any]] = []
         self.subtitle_index = 0
         self.subtitle_enabled = False
+        self.music_repeat = "off"  # repeat of the music playlist ("off", "one", "all")
         self.forget_streams = False  # opening again starts with the first tracks
+        self.streams_delay = 0  # answers without streams after opening (stream not open yet)
+        self._streams_hidden = 0
         self.websocket = False
         self.resume_dialog = False  # an add-on asks "Resume from …" when an item opens
         self._dialog: dict[str, Any] | None = None
@@ -124,7 +127,10 @@ class FakeKodi:
     def _advance(self) -> None:
         """Let a clip play on; it ends by itself after clip_length."""
         if self._clip is not None and time.monotonic() - self._clip[1] >= self.clip_length:
-            self._stop(end=True)
+            if self.music_repeat != "off":
+                self._clip = (self._clip[0], time.monotonic())  # plays again, gaplessly
+            else:
+                self._stop(end=True)
 
     # JSON-RPC --------------------------------------------------------------------
 
@@ -208,13 +214,22 @@ class FakeKodi:
             "position": self.position,
             "time": dict(self.time),
             "speed": self.speed,
+            "repeat": self.music_repeat if self.player_type == "audio" else "off",
             "totaltime": _time(0),
         }
         if self._clip is not None:
             played = time.monotonic() - self._clip[1]
             props["time"] = _time(int(played))
             props["totaltime"] = _time(max(1, round(self.clip_length)))
-        if self.player_type == "video":
+        hidden = self._streams_hidden > 0 and any(
+            name in properties for name in ("audiostreams", "subtitles")
+        )
+        if hidden:
+            self._streams_hidden -= 1
+        if self.player_type == "video" and hidden:
+            props |= {"audiostreams": [], "subtitles": [], "currentaudiostream": {}}
+            props |= {"currentsubtitle": {}, "subtitleenabled": False}
+        elif self.player_type == "video":
             props["audiostreams"] = [dict(s) for s in self.audio_streams]
             props["currentaudiostream"] = self._stream(self.audio_streams, self.audio_index)
             props["subtitles"] = [dict(s) for s in self.subtitles]
@@ -267,57 +282,58 @@ class FakeKodi:
         raise KodiRpcError("Player.Open", -32602, "Unsupported item")
 
     def _open_single(self, item: dict[str, Any], resume: Any) -> str:
+        """Like Kodi's PlayListPlayer::Play(item): its playlist becomes just this item.
+
+        Live TV goes through PVR and leaves the playlists alone.
+        """
         file = item.get("file")
+        self._stop(end=False)
         if file and file.lower().endswith(AUDIO_EXTENSIONS):
-            self._stop(end=False)
-            self.music_playlist.clear()
+            self.music_playlist[:] = [self._to_playlist_item(item)]
             self.clips.append(file)
             if not self.clip_starts:
-                return "OK"
+                return "OK"  # added, but the player fails
             self._clip = (file, time.monotonic())
-            self.player_type, self.position, self.player_active = "audio", -1, True
-            self.current_outside = {"file": file, "label": "clip", "type": "song"}
+            self.player_type, self.position, self.player_active = "audio", 0, True
             self._emit("Player.OnPlay")
             self._emit("Player.OnAVStart")
             return "OK"
         if "channelid" in item:
-            outside = {"type": "channel", "id": item["channelid"], "file": "pvr://channels/1"}
-        elif file:
-            outside = {"file": file, "label": file, "type": "unknown"}
-        else:
-            key, kind = next(
-                (key, kind)
-                for key, kind in (("movieid", "movie"), ("episodeid", "episode"))
-                if key in item
-            )
-            outside = {"type": kind, "id": item[key], "file": f"smb://nas/{kind}/{item[key]}.mkv"}
-            self.playlist.clear()  # a single video replaces the video playlist
-        if file:
-            self.playlist.clear()
-        self._stop(end=False)
+            channel = {"type": "channel", "id": item["channelid"], "file": "pvr://channels/1"}
+            self._start(channel, -1, 0)
+            return "OK"
+        self.playlist[:] = [self._to_playlist_item(item)]
         seconds = _seconds(resume) if isinstance(resume, dict) else 0
         if self.resume_dialog and seconds:
             # The add-on asks first; Input.Select confirms "Resume from …"
             minutes, secs = divmod(seconds, 60)
             hours, minutes = divmod(minutes, 60)
             self._dialog = {
-                "item": outside,
                 "seconds": seconds,
                 "label": f"Fortsetzen ab {hours}:{minutes:02}:{secs:02}",
             }
             return "OK"
-        self._start_outside(outside, seconds)
+        self._start(None, 0, seconds)
         return "OK"
 
+    def _start(self, outside: dict[str, Any] | None, position: int, seconds: int) -> None:
+        self.player_active, self.player_type = True, "video"
+        self.position, self.current_outside = position, outside
+        self.time = _time(seconds)
+        self.speed = 1
+        self._forget_streams()
+        self._emit("Player.OnPlay")
+
     def _forget_streams(self) -> None:
+        self._streams_hidden = self.streams_delay
         if self.forget_streams:
             self.audio_index, self.subtitle_index, self.subtitle_enabled = 0, 0, False
 
-    def _start_outside(self, outside: dict[str, Any], seconds: int) -> None:
-        self.start_video_outside_queue(outside, seconds)
-        self._forget_streams()
-        self.speed = 1
-        self._emit("Player.OnPlay")
+    def _Player_SetRepeat(self, playerid: int, repeat: str) -> str:
+        self._require_player(playerid)
+        if self.player_type == "audio":
+            self.music_repeat = repeat
+        return "OK"
 
     def _Player_PlayPause(self, playerid: int, play: Any = "toggle") -> dict[str, Any]:
         self._require_player(playerid)
@@ -371,7 +387,7 @@ class FakeKodi:
         self.press_key()  # like Kodi: counts as input
         if self._dialog is not None:
             dialog, self._dialog = self._dialog, None
-            self._start_outside(dialog["item"], dialog["seconds"])
+            self._start(None, 0, dialog["seconds"])
         return "OK"
 
     def _Player_GoTo(self, playerid: int, to: int) -> str:
@@ -438,9 +454,12 @@ class FakeKodi:
         return "OK"
 
     def _Playlist_Clear(self, playlistid: int) -> str:
-        self.playlist.clear()
-        if self.position >= 0:
+        """Like Kodi: what plays from it goes on, without a position."""
+        playing = self.music_playlist if self.player_type == "audio" else self.playlist
+        if self.position >= 0 and self._list(playlistid) is playing:
+            self.current_outside = playing[self.position]
             self.position = -1
+        self._list(playlistid).clear()
         return "OK"
 
     def _library(self, key: str, filter: dict[str, Any] | None = None, **_: Any) -> dict[str, Any]:

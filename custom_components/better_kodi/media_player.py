@@ -1,8 +1,9 @@
 """Better Kodi media player: mirrors a Kodi entity and adds queue features."""
 
 import asyncio
-from collections.abc import Awaitable
+from collections.abc import AsyncIterator, Awaitable
 import contextlib
+from contextvars import ContextVar
 from datetime import datetime
 import logging
 import re
@@ -121,6 +122,8 @@ LINK_IN_TEXT = re.compile(r"https?://\S+")
 TRAILING_PUNCTUATION = ".,;:!?)]}>'\"»“”"
 PLAYABLE_SCHEMES = frozenset({"http", "https", *KODI_PATH_SCHEMES})
 ANNOUNCE_VOLUME = "announce_volume"  # in "extra" of play_media: 0..100
+# Set while a command runs, so that commands it calls (handover → stop) don't wait for it
+_IN_COMMAND: ContextVar[bool] = ContextVar(f"{DOMAIN}_in_command", default=False)
 
 
 async def async_setup_entry(
@@ -348,15 +351,30 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
 
     # --- Forwarded commands ---------------------------------------------------
 
+    @contextlib.asynccontextmanager
+    async def _command(self, *, uses_kodi: bool = True) -> AsyncIterator[None]:
+        """Run a command after running announcements; they wait for it in turn."""
+        if uses_kodi:
+            self._woken_for_announcement = None  # used from Home Assistant: don't switch off
+        if _IN_COMMAND.get():
+            yield
+            return
+        async with self._data.announcer.command():
+            token = _IN_COMMAND.set(True)
+            try:
+                yield
+            finally:
+                _IN_COMMAND.reset(token)
+
     async def _forward(self, service: str, **data: Any) -> None:
-        await self._data.announcer.wait_idle()  # commands wait for a running announcement
-        await self.hass.services.async_call(
-            MEDIA_PLAYER_DOMAIN,
-            service,
-            {ATTR_ENTITY_ID: self._source_entity_id, **data},
-            blocking=True,
-            context=self._context,
-        )
+        async with self._command():
+            await self.hass.services.async_call(
+                MEDIA_PLAYER_DOMAIN,
+                service,
+                {ATTR_ENTITY_ID: self._source_entity_id, **data},
+                blocking=True,
+                context=self._context,
+            )
 
     @property
     def _wake_on_lan(self) -> bool:
@@ -459,7 +477,12 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
         if kwargs.get(ATTR_MEDIA_ANNOUNCE):
             await self._async_announce(media_id, kwargs.get(ATTR_MEDIA_EXTRA) or {})
             return
-        await self._data.announcer.wait_idle()
+        async with self._command():
+            await self._async_play_media(media_type, media_id, enqueue)
+
+    async def _async_play_media(
+        self, media_type: MediaType | str, media_id: str, enqueue: MediaPlayerEnqueue | None
+    ) -> None:
         mode = EnqueueMode(enqueue) if enqueue else EnqueueMode.PLAY
         media_id = extract_link(media_id)
         if media_id.startswith(ENQUEUE_PREFIX):
@@ -737,7 +760,8 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
 
     async def async_clear_playlist(self) -> None:
         """Clear the video queue."""
-        await self._run(self._data.queue.clear())
+        async with self._command():
+            await self._run(self._data.queue.clear())
 
     async def _async_resolve(self, url: str) -> ResolvedMedia:
         addons = await self._data.async_get_addons()
@@ -790,12 +814,14 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
         self, method: str, params: dict[str, Any] | None = None
     ) -> dict[str, Any]:
         """Call a Kodi JSON-RPC method and return its result."""
-        return {"result": await self._run(self._data.client.call(method, params or None))}
+        async with self._command():
+            return {"result": await self._run(self._data.client.call(method, params or None))}
 
     async def async_get_queue(self) -> dict[str, Any]:
         """Return the queue."""
-        items = await self._run(self._data.queue.items())
-        status = await self._run(self._data.queue.status())
+        async with self._command(uses_kodi=False):
+            items = await self._run(self._data.queue.items())
+            status = await self._run(self._data.queue.status())
         return {
             "position": status.position,
             "length": len(items),
@@ -804,16 +830,24 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
 
     async def async_remove_from_queue(self, position: int) -> None:
         """Remove an item from the queue."""
-        await self._run(self._data.queue.remove(position))
+        async with self._command():
+            await self._run(self._data.queue.remove(position))
 
     async def async_move_queue_item(self, position: int, to_position: int) -> None:
         """Move an item within the queue."""
-        await self._run(self._data.queue.move(position, to_position))
+        async with self._command():
+            await self._run(self._data.queue.move(position, to_position))
 
     async def async_handover(
         self, destination: str, keep_source_playing: bool = False, resume: bool = True
     ) -> None:
         """Continue the current playback on another Better Kodi entity."""
+        async with self._command():
+            await self._async_handover(destination, keep_source_playing, resume)
+
+    async def _async_handover(
+        self, destination: str, keep_source_playing: bool, resume: bool
+    ) -> None:
         target = destination
         target_data = self._target_data(target)
         if (await self._run(self._data.queue.status())).player_id is None:

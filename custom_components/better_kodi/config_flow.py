@@ -328,7 +328,7 @@ class BetterKodiOptionsFlow(OptionsFlowWithReload):
             values[CONF_SHARE_DEVICES] = list(share.get(CONF_SHARE_DEVICES) or [])
             # An emptied field is left out: Kodi's own volume
             volume = announce.get(CONF_ANNOUNCE_VOLUME)
-            values[CONF_ANNOUNCE_VOLUME] = None if volume is None else int(volume)
+            values[CONF_ANNOUNCE_VOLUME] = None if volume is None else round(volume)
             mac_text = (power.get(CONF_MAC) or "").strip()  # an emptied field is left out
             mac = normalize_mac(mac_text)
             values[CONF_MAC] = mac or mac_text

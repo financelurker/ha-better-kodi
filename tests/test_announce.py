@@ -136,8 +136,9 @@ async def test_library_movie_outside_the_queue(kodi: FakeKodi, announcer: Announ
         "options": {"resume": {"hours": 0, "minutes": 12, "seconds": 34, "milliseconds": 0}},
     }
     assert kodi.current_outside["id"] == 7
+    assert kodi.position == -1  # plays outside the queue again
     assert kodi.time["minutes"] == 12
-    assert kodi.files() == queue  # Kodi emptied the queue when opening the movie; filled again
+    assert kodi.files() == queue  # Kodi replaced the queue with the movie; put back
 
 
 async def test_live_tv_is_switched_back(kodi: FakeKodi, announcer: Announcer) -> None:
@@ -258,6 +259,87 @@ async def test_wait_idle(kodi: FakeKodi, announcer: Announcer) -> None:
     await asyncio.wait_for(waiter, 1)
 
 
+async def test_tracks_are_chosen_once_kodi_lists_them(kodi: FakeKodi, announcer: Announcer) -> None:
+    kodi.forget_streams = True
+    kodi.streams_delay = 3  # the stream isn't open yet right after starting
+    await announcer.announce(CLIP)
+    assert (kodi.audio_index, kodi.subtitle_index, kodi.subtitle_enabled) == (1, 1, True)
+
+
+async def test_repeat_doesnt_loop_the_clip(kodi: FakeKodi, announcer: Announcer) -> None:
+    kodi.music_playlist = [{"file": "smb://nas/music/1.flac", "label": "1", "type": "unknown"}]
+    kodi.player_type, kodi.position, kodi.time = "audio", 0, {"minutes": 1, "seconds": 5}
+    kodi.music_repeat = "all"
+    assert await announcer.announce(CLIP, max_duration=5) is Outcome.DONE
+    assert "Player.Stop" not in kodi.method_calls()  # ended by itself, didn't loop
+    assert kodi.player_type == "audio"
+    assert kodi.music_repeat == "all"  # back on for the music
+
+
+async def test_short_clip_not_seen_playing(kodi: FakeKodi, announcer: Announcer) -> None:
+    kodi.clip_length = 0.0  # over before the first look
+    assert await announcer.announce(CLIP) is Outcome.DONE
+    assert kodi.position == 1
+    assert kodi.time == AT_42_17
+
+
+async def test_cancelled_while_waiting_kodi_still_continues(
+    kodi: FakeKodi, announcer: Announcer
+) -> None:
+    """An automation restarted while its announcement waited for another one."""
+    first = asyncio.ensure_future(announcer.announce(CLIP))
+    await asyncio.sleep(0.1)
+    second = asyncio.ensure_future(announcer.announce(CLIP_2))
+    await asyncio.sleep(0.1)
+    second.cancel()
+    await first
+    await asyncio.wait_for(announcer.wait_idle(), 5)
+    assert kodi.position == 1
+    assert kodi.time == AT_42_17
+    assert kodi.clips == [CLIP]
+
+
+async def test_cancelled_while_playing_kodi_still_continues(
+    kodi: FakeKodi, announcer: Announcer
+) -> None:
+    kodi.clip_length = 5
+    task = asyncio.ensure_future(announcer.announce(CLIP))
+    await asyncio.sleep(0.3)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await asyncio.wait_for(announcer.wait_idle(), 5)
+    assert kodi.player_type == "video"  # the clip was stopped
+    assert kodi.position == 1
+    assert kodi.time == AT_42_17
+
+    # The next announcement notes Kodi afresh
+    kodi.time = {"hours": 0, "minutes": 50, "seconds": 0, "milliseconds": 0}
+    kodi.clip_length = 0.3
+    await announcer.announce(CLIP_2)
+    assert kodi.time["minutes"] == 50
+
+
+async def test_announcements_wait_for_running_commands(
+    kodi: FakeKodi, announcer: Announcer
+) -> None:
+    released = asyncio.Event()
+
+    async def command() -> None:
+        async with announcer.command():
+            await released.wait()
+
+    running = asyncio.ensure_future(command())
+    await asyncio.sleep(0)
+    task = asyncio.ensure_future(announcer.announce(CLIP))
+    await asyncio.sleep(0.2)
+    assert kodi.clips == []
+    released.set()
+    await running
+    assert await task is Outcome.DONE
+    assert kodi.clips == [CLIP]
+
+
 def test_streams_are_found_by_language_and_name() -> None:
     german = Stream(1, "ger", "Deutsch 5.1")
     assert german.find_in(AUDIO) == 1
@@ -267,3 +349,8 @@ def test_streams_are_found_by_language_and_name() -> None:
     assert Stream(1, "", "").find_in(AUDIO) == 1  # index as the last resort
     assert Stream(5, "fre", "").find_in(AUDIO) is None
     assert Stream.from_kodi({}) is None
+    unnamed = [
+        {"index": 0, "language": "eng", "name": ""},
+        {"index": 1, "language": "eng", "name": ""},
+    ]
+    assert Stream(1, "eng", "").find_in(unnamed) == 1  # the noted one of two alike

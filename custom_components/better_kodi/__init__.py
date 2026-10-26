@@ -52,6 +52,7 @@ _LOGGER = logging.getLogger(__name__)
 PLATFORMS = [Platform.MEDIA_PLAYER]
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 ADDON_CACHE_SECONDS = 600
+ANNOUNCERS = f"{DOMAIN}_announcers"  # per entry, kept across reloads
 NOTIFICATIONS = ("Playlist.", "Player.OnPlay", "Player.OnStop", "Player.OnAVStart")
 
 type BetterKodiConfigEntry = ConfigEntry[BetterKodiData]
@@ -174,7 +175,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: BetterKodiConfigEntry) -
     data = BetterKodiData(
         client=client,
         queue=KodiQueue(client, look_up_title, youtube_thumbnails=online_lookups),
-        announcer=Announcer(client),
+        announcer=_announcer(hass, entry, client),
         source_entity_id=source_entity_id,
         web_session=web_session,
     )
@@ -211,6 +212,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: BetterKodiConfigEntry) -
     return True
 
 
+def _announcer(hass: HomeAssistant, entry: ConfigEntry, client: KodiClient) -> Announcer:
+    """Return the entry's announcer; kept across reloads (options saved mid-announcement)."""
+    announcers: dict[str, Announcer] = hass.data.setdefault(ANNOUNCERS, {})
+    if (announcer := announcers.get(entry.entry_id)) is None:
+        announcer = announcers[entry.entry_id] = Announcer(client)
+    announcer.client = client  # same Kodi; a running announcement goes on with it
+    return announcer
+
+
 def _remove_switched_off_entities(
     hass: HomeAssistant, entry: ConfigEntry, wanted: set[str]
 ) -> None:
@@ -230,6 +240,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: BetterKodiConfigEntry) 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Give the Kodi entity back what Better Kodi took over."""
+    hass.data.get(ANNOUNCERS, {}).pop(entry.entry_id, None)
     registry = er.async_get(hass)
     source_entity_id = er.async_resolve_entity_id(registry, entry.data[CONF_SOURCE_ENTITY_UUID])
     if source_entity_id is None:
