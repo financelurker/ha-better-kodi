@@ -14,6 +14,7 @@ from custom_components.better_kodi.announce import (
     RestoreError,
     Stream,
 )
+from custom_components.better_kodi.kodi_client import KodiConnectionError
 
 from .fake_kodi import FakeKodi
 
@@ -246,9 +247,10 @@ async def test_movie_outside_a_shuffled_queue(kodi: FakeKodi, announcer: Announc
 async def test_an_entry_kodi_refuses_doesnt_cost_the_queue(
     kodi: FakeKodi, announcer: Announcer
 ) -> None:
+    kodi.playlist[0] = {"file": "/media/usb/a.mkv", "label": "a", "type": "unknown"}
     kodi.start_video_outside_queue(MOVIE_7, seconds=754)
     first, second = kodi.files()
-    kodi.unavailable = {first}  # the drive is gone
+    kodi.unavailable = {first}  # the USB drive is gone
     await announcer.announce(CLIP)
     assert kodi.files() == [second, MOVIE_7["file"]]
     assert kodi.position == 1
@@ -281,6 +283,49 @@ async def test_tidying_up_doesnt_hold_up_announcements(
     started = loop.time()
     await announcer.announce(CLIP_2)
     assert loop.time() - started < 2.5  # the clip plays 0.6 s; the check would hang 5 s
+
+
+async def test_kodi_gone_while_putting_the_queue_back(kodi: FakeKodi, announcer: Announcer) -> None:
+    """Kodi stops answering after the first entry: its entry still goes once it answers."""
+    kodi.start_video_outside_queue(MOVIE_7, seconds=754)
+    first, _ = kodi.files()
+    call = kodi.call
+    inserts = 0
+
+    async def gone_after_one_insert(method: str, params: Any = None) -> Any:
+        nonlocal inserts
+        if method == "Playlist.Insert":
+            inserts += 1
+            if inserts == 2:
+                raise KodiConnectionError("Playlist.Insert: gone")
+        return await call(method, params)
+
+    kodi.call = gone_after_one_insert
+    await announcer.announce(CLIP)
+    assert kodi.files() == [first, MOVIE_7["file"]]
+    kodi.video_ends()
+    for _ in range(100):
+        if kodi.files() == [first]:
+            break
+        await asyncio.sleep(0.05)
+    assert kodi.files() == [first]
+
+
+async def test_closing_stops_a_watcher_whose_check_was_cancelled(
+    kodi: FakeKodi, announcer: Announcer
+) -> None:
+    kodi.start_video_outside_queue(MOVIE_7, seconds=754)
+    await announcer.announce(CLIP)
+    (watcher,) = announcer._tail_tasks
+    for _ in range(100):
+        if announcer._tail_checks:
+            break
+        await asyncio.sleep(0.01)
+    for check in list(announcer._tail_checks):
+        check.cancel()  # as an announcement does
+    announcer.close()  # in the same step
+    await asyncio.sleep(0.3)
+    assert watcher.done()
 
 
 async def test_live_tv_is_switched_back(kodi: FakeKodi, announcer: Announcer) -> None:

@@ -80,10 +80,10 @@ class FakeKodi:
         self.notify: Callable[[str, dict[str, Any]], None] | None = None
         # Kodi's current playlist (MUSIC, VIDEO or None) and the position before a stop
         self.current_playlist: int | None = None
-        self.resolved: dict[str, str] = {}
-        self.unavailable: set[str] = (
-            set()
-        )  # files Kodi refuses to add (drive gone, say)  # add-on path -> stream URL once it plays
+        self.resolved: dict[str, str] = {}  # add-on path -> stream URL once it plays
+        # Local files that no longer exist: Kodi skips them when adding, and refuses
+        # an insert if nothing is left (network paths and URLs are never refused)
+        self.unavailable: set[str] = set()
         self.position_before_stop = -1
 
     # Helpers for tests ----------------------------------------------------------
@@ -502,8 +502,12 @@ class FakeKodi:
         items = [dict(item) for item in self._list(playlistid)]
         return {"items": items, "limits": {"start": 0, "end": len(items), "total": len(items)}}
 
+    def _available(self, item: Any) -> list[dict[str, Any]]:
+        entries = item if isinstance(item, list) else [item]
+        return [entry for entry in entries if entry.get("file") not in self.unavailable]
+
     def _Playlist_Add(self, playlistid: int, item: Any) -> str:
-        for entry in item if isinstance(item, list) else [item]:
+        for entry in self._available(item):
             self._list(playlistid).append(self._to_playlist_item(entry))
             if playlistid == MUSIC:
                 self._music_added.append(self._to_playlist_item(entry))
@@ -515,14 +519,9 @@ class FakeKodi:
         playlist = self._list(playlistid)
         if not 0 <= position <= len(playlist):
             raise KodiRpcError("Playlist.Insert", -32602, "Invalid params.")
-        if any(
-            entry.get("file") in self.unavailable
-            for entry in (item if isinstance(item, list) else [item])
-        ):
+        if not (available := self._available(item)):
             raise KodiRpcError("Playlist.Insert", -32602, "Invalid params.")
-        entries = [
-            self._to_playlist_item(entry) for entry in (item if isinstance(item, list) else [item])
-        ]
+        entries = [self._to_playlist_item(entry) for entry in available]
         playlist[position:position] = entries
         playing = self.music_playlist if self.player_type == "audio" else self.playlist
         if playlist is playing and self.position >= 0 and position <= self.position:

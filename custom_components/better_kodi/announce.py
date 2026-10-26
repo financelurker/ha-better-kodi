@@ -739,23 +739,28 @@ class Announcer:
         # One entry per call: Kodi moves its current entry by one per insert,
         # also when one insert adds several entries.
         inserted: list[dict[str, Any]] = []
-        for entry in saved:
-            try:
-                await self.client.call(
-                    "Playlist.Insert",
-                    {"playlistid": playlist_id, "position": len(inserted), "item": entry},
-                )
-            except KodiRpcError as err:
-                # Gone meanwhile (a removed drive, a deleted library entry), as Kodi
-                # would have skipped it when playing the playlist.
-                _LOGGER.debug("Kodi refused an entry of the playlist: %s", err)
-            else:
-                inserted.append(entry)
-        # How Kodi shows the item now (an add-on item by its resolved path, say)
-        shown = await self._playlist(playlist_id)
-        tail = len(inserted)
-        seen = shown[tail] if shown is not None and len(shown) > tail else None
-        self._watch_tail(_Tail(playlist_id, inserted, [playback.item, seen]))
+        seen: dict[str, Any] | None = None
+        try:
+            for entry in saved:
+                try:
+                    await self.client.call(
+                        "Playlist.Insert",
+                        {"playlistid": playlist_id, "position": len(inserted), "item": entry},
+                    )
+                except KodiRpcError as err:
+                    # Gone meanwhile (a deleted library entry, a missing local file),
+                    # as Kodi would have skipped it when playing the playlist.
+                    _LOGGER.debug("Kodi refused an entry of the playlist: %s", err)
+                else:
+                    inserted.append(entry)
+            # How Kodi shows the item now (an add-on item by its resolved path, say);
+            # Kodi reads the playlist after handling the inserts (same message queue).
+            shown = await self._playlist(playlist_id)
+            if shown is not None and len(shown) > len(inserted):
+                seen = shown[len(inserted)]
+        finally:
+            # Also if Kodi stopped answering halfway: the item's entry goes later.
+            self._watch_tail(_Tail(playlist_id, inserted, [playback.item, seen]))
 
     def _watch_tail(self, tail: _Tail) -> None:
         task = self._create_task(self._remove_tail_later(tail), f"{__name__} remove reopened item")
@@ -776,9 +781,11 @@ class Announcer:
                 if await asyncio.shield(check):
                     return
             except asyncio.CancelledError:
-                if not check.cancelled():
+                task = asyncio.current_task()
+                if task is not None and task.cancelling():
                     check.cancel()
-                    raise  # the watcher itself was cancelled
+                    raise  # the watcher itself was cancelled (also with its check)
+                # Only the check was cancelled (an announcement started): later again.
             finally:
                 self._tail_checks.discard(check)
 
