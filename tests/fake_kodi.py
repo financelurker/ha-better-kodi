@@ -60,6 +60,13 @@ class FakeKodi:
         self.subtitle_index = 0
         self.subtitle_enabled = False
         self.music_repeat = "off"  # repeat of the music playlist ("off", "one", "all")
+        # Shuffle of the music playlist: adding while shuffled shuffles everything
+        # again (here: reversed, to be predictable); opening unshuffled restores
+        # the order the entries were added in.
+        self.music_shuffled = False
+        self._music_added: list[dict[str, Any]] = []
+        # Called after Kodi opened a single item (an add-on filling the playlist, say)
+        self.after_open_single: Callable[[], None] | None = None
         self.forget_streams = False  # opening again starts with the first tracks
         self.streams_delay = 0  # answers without streams after opening (stream not open yet)
         self._streams_hidden = 0
@@ -215,6 +222,7 @@ class FakeKodi:
             "time": dict(self.time),
             "speed": self.speed,
             "repeat": self.music_repeat if self.player_type == "audio" else "off",
+            "shuffled": self.music_shuffled if self.player_type == "audio" else False,
             "totaltime": _time(0),
         }
         if self._clip is not None:
@@ -256,8 +264,12 @@ class FakeKodi:
             position = item.get("position", 0)
             if not 0 <= position < len(self.music_playlist):
                 raise KodiRpcError("Player.Open", -32602, "Invalid params.")
+            if (options or {}).get("shuffled") is False and self.music_shuffled:
+                self.music_playlist[:] = self._music_added
+                self.music_shuffled = False
             self._stop(end=False)
             self.player_type, self.position, self.player_active = "audio", position, True
+            self.speed = 1
             self._emit("Player.OnPlay")
             return "OK"
         if "playlistid" not in item:
@@ -265,6 +277,7 @@ class FakeKodi:
         self._stop(end=False)
         self._clip = None
         self.player_type = "video"
+        self.speed = 1  # opening plays, also what was paused
         if item.get("playlistid") == VIDEO:
             position = item.get("position", 0)
             if not 0 <= position < len(self.playlist):
@@ -290,6 +303,7 @@ class FakeKodi:
         self._stop(end=False)
         if file and file.lower().endswith(AUDIO_EXTENSIONS):
             self.music_playlist[:] = [self._to_playlist_item(item)]
+            self._music_added[:] = list(self.music_playlist)
             self.clips.append(file)
             if not self.clip_starts:
                 return "OK"  # added, but the player fails
@@ -303,6 +317,8 @@ class FakeKodi:
             self._start(channel, -1, 0)
             return "OK"
         self.playlist[:] = [self._to_playlist_item(item)]
+        if self.after_open_single is not None:
+            self.after_open_single()
         seconds = _seconds(resume) if isinstance(resume, dict) else 0
         if self.resume_dialog and seconds:
             # The add-on asks first; Input.Select confirms "Resume from …"
@@ -333,6 +349,12 @@ class FakeKodi:
         self._require_player(playerid)
         if self.player_type == "audio":
             self.music_repeat = repeat
+        return "OK"
+
+    def _Player_SetShuffle(self, playerid: int, shuffle: bool) -> str:
+        self._require_player(playerid)
+        if self.player_type == "audio":
+            self.music_shuffled = shuffle
         return "OK"
 
     def _Player_PlayPause(self, playerid: int, play: Any = "toggle") -> dict[str, Any]:
@@ -424,6 +446,10 @@ class FakeKodi:
     def _Playlist_Add(self, playlistid: int, item: Any) -> str:
         for entry in item if isinstance(item, list) else [item]:
             self._list(playlistid).append(self._to_playlist_item(entry))
+            if playlistid == MUSIC:
+                self._music_added.append(self._to_playlist_item(entry))
+        if playlistid == MUSIC and self.music_shuffled:
+            self.music_playlist.reverse()
         return "OK"
 
     def _Playlist_Insert(self, playlistid: int, position: int, item: Any) -> str:
@@ -460,6 +486,8 @@ class FakeKodi:
             self.current_outside = playing[self.position]
             self.position = -1
         self._list(playlistid).clear()
+        if playlistid == MUSIC:
+            self._music_added.clear()
         return "OK"
 
     def _library(self, key: str, filter: dict[str, Any] | None = None, **_: Any) -> dict[str, Any]:

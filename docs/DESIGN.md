@@ -184,7 +184,9 @@ Kodi can't mix a clip into a video, and no add-on is assumed. So `announce.py` i
 
 Details found in Kodi's source:
 
-- `Player.Open` with a single item replaces the playlist of its type with that item and plays it from there (`CPlayListPlayer::Play(item)`): the music playlist becomes the clip, and the video playlist (the queue) becomes a movie that is reopened outside the queue. Better Kodi puts back every playlist that differs from the noted one (`Playlist.Clear`, `Playlist.Add`; Kodi handles them in order, and clearing doesn't stop what plays): before reopening, and again afterwards for a single item.
+- `Player.Open` with a single item replaces the playlist of its type with that item and plays it from there (`CPlayListPlayer::Play(item)`): the music playlist becomes the clip, and the video playlist (the queue) becomes a movie that is reopened outside the queue. Kodi's own menus start single videos the same way (`GUIWindowVideoBase::OnPlayMedia`), so "a movie outside a different queue" mostly comes from add-ons. Better Kodi puts a playlist back (`Playlist.Clear`, `Playlist.Add`; Kodi handles them in order, and clearing doesn't stop what plays) only if it holds just what Better Kodi opened (the clip, or the reopened item); a playlist someone or an add-on filled meanwhile is left alone. Entries go back by library ID where they have one, otherwise by path.
+- Decision: after a single item is reopened, the old queue is put back, and Kodi continues with it once the item ends (clearing leaves no current entry, so Kodi starts the queue from its first entry). Losing the queue would be worse.
+- A shuffled playlist that is put back is shuffled anew by Kodi (`Add` reshuffles). Better Kodi opens it with `shuffled: false` (Kodi's own order, which is the noted one) at the noted position and switches shuffle on again once it plays.
 - Kodi's idle time (`System.IdleTime(n)`, `XBMC.GetInfoBooleans`) is only reset by input (remote, keyboard, CEC, joystick, `Input.*` calls), not by `Player.*` calls. Better Kodi uses it to tell whether someone used Kodi.
 - Add-ons may ask "Resume from …" (Jellyfin for Kodi when transcoding). Better Kodi confirms the focused entry with `Input.Select` only if it shows the noted time (±3 s), whatever the language; otherwise it leaves dialogs alone.
 
@@ -192,9 +194,11 @@ Details found in Kodi's source:
 
 Announcements are serialized per Kodi. One that arrives during another plays next; the noted state is kept and Kodi continues once after the last. Commands from Home Assistant to the Better Kodi entity (play_media, forwarded controls, clear_playlist, the queue services, handover, call_method; also the link buttons and shared links, which use play_media) wait until the announcements are done, and an announcement waits for commands that are running before it notes Kodi's state. The announcer outlives a reload of the entry (saving the options), so the waiting still holds.
 
-If an announcement is cancelled (an automation restarted or stopped), Kodi still continues: the clip is stopped and the noted item opened again in the background, unless another announcement waits and does it.
+If an announcement is cancelled (an automation restarted or stopped), Kodi still continues: the clip is stopped and the noted item opened again in the background, unless another announcement waits and does it. Continuing always runs in a task of its own (a Home Assistant background task), so cancelling the caller can't cut it short; announcements and commands wait until it is done.
 
-**Suspended Kodi**: with "Wake Kodi before sending", Better Kodi wakes Kodi, checks the mute, plays and switches Kodi off again with the configured command, but only if nothing plays, Kodi's idle time covers the time since waking, and no other command was sent to the entity meanwhile.
+A command's own task doesn't wait for itself (a handover stopping playback); tasks it starts do wait.
+
+**Suspended Kodi**: with "Wake Kodi before sending", Better Kodi wakes Kodi, checks the mute, plays and switches Kodi off again with the configured command, but only if nothing plays, Kodi's idle time covers the time since waking, and no command was sent to Better Kodi meanwhile (the media player, its link buttons and maintenance buttons). The check runs with Kodi to itself like an announcement; a command that arrives during it is counted and stops the switch-off right before the power command.
 
 Accepted limits: stopping close to the end may mark the video as watched; the clip can't be heard if the TV or receiver is off (not detectable); a Home Assistant restart during an announcement leaves the video stopped; shuffle, party mode and items that can't be opened again (DRM, disc menus) are best effort; if music wasn't playing, the music playlist's repeat stays off after the clip (Kodi only sets it on a player).
 

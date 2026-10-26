@@ -74,6 +74,9 @@ class BetterKodiData:
     link: str = ""
     link_listeners: list[QueueListener] = field(default_factory=list)
     platforms: list[Platform] = field(default_factory=lambda: list(PLATFORMS))
+    # When Better Kodi woke Kodi for an announcement (to switch it off again afterwards)
+    woken_for_announcement: float | None = None
+    uses: int = 0  # counts commands from Home Assistant
 
     @property
     def backend_context(self) -> backends.BackendContext:
@@ -108,6 +111,11 @@ class BetterKodiData:
                 )
                 self.addons_loaded_at = time.monotonic()
         return self.addons
+
+    def mark_used(self) -> None:
+        """Kodi is used from Home Assistant: don't switch it off after an announcement."""
+        self.woken_for_announcement = None
+        self.uses += 1
 
     def notify_queue_changed(self) -> None:
         """Tell listeners (the entity) that the queue may have changed."""
@@ -216,7 +224,10 @@ def _announcer(hass: HomeAssistant, entry: ConfigEntry, client: KodiClient) -> A
     """Return the entry's announcer; kept across reloads (options saved mid-announcement)."""
     announcers: dict[str, Announcer] = hass.data.setdefault(ANNOUNCERS, {})
     if (announcer := announcers.get(entry.entry_id)) is None:
-        announcer = announcers[entry.entry_id] = Announcer(client)
+        announcer = announcers[entry.entry_id] = Announcer(
+            client,
+            create_task=lambda coro, name: hass.async_create_background_task(coro, name),
+        )
     announcer.client = client  # same Kodi; a running announcement goes on with it
     return announcer
 

@@ -9,7 +9,7 @@ Like queue.py, this module only talks to Kodi through KodiClient.
 """
 
 import asyncio
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine
 import contextlib
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -21,7 +21,6 @@ from urllib.parse import unquote
 
 from .const import LIBRARY_ID_KEYS
 from .kodi_client import KodiClient, KodiError, KodiRpcError
-from .queue import portable_item
 from .redact import redact_url
 
 _LOGGER = logging.getLogger(__name__)
@@ -54,6 +53,7 @@ STREAM_PROPERTIES = [
 ]
 
 type Clock = Callable[[], float]
+type TaskFactory = Callable[[Coroutine[Any, Any, Outcome], str], asyncio.Task[Outcome]]
 
 
 class Outcome(StrEnum):
@@ -129,6 +129,8 @@ class Playback:
     audio: Stream | None = None
     subtitle: Stream | None = None
     subtitle_enabled: bool | None = None
+    player_type: str = "video"
+    shuffled: bool = False
 
     @property
     def seconds(self) -> int:
@@ -148,6 +150,7 @@ class Snapshot:
     volume_set: int | None = None  # what Better Kodi set for the clip
     clip: str | None = None  # the last clip Better Kodi opened
     music_repeat: str | None = None  # the music playlist's repeat, switched off for the clip
+    put_back: set[int] = field(default_factory=set)  # playlists Better Kodi put back
     start_timeout: float = 30
 
 
@@ -169,10 +172,19 @@ class Announcer:
     running commands before it notes what Kodi plays.
     """
 
-    def __init__(self, client: KodiClient, *, clock: Clock = time.monotonic) -> None:
-        """Initialize with a Kodi client."""
+    def __init__(
+        self,
+        client: KodiClient,
+        *,
+        clock: Clock = time.monotonic,
+        create_task: TaskFactory | None = None,
+    ) -> None:
+        """Initialize with a Kodi client; create_task starts background tasks."""
         self.client = client
         self._clock = clock
+        self._create_task: TaskFactory = create_task or (
+            lambda coro, name: asyncio.get_running_loop().create_task(coro, name=name)
+        )
         self._lock = asyncio.Lock()
         self._waiting = 0
         self._idle = asyncio.Event()
@@ -180,13 +192,14 @@ class Announcer:
         self._commands = 0
         self._no_commands = asyncio.Event()
         self._no_commands.set()
+        self._command_tasks: set[asyncio.Task[Any]] = set()
         self._session: Snapshot | None = None
+        self._finishing: asyncio.Task[Outcome] | None = None
         self._listening: _Listening | None = None
-        self._tasks: set[asyncio.Task[None]] = set()
 
     @property
     def busy(self) -> bool:
-        """Return True while an announcement runs or waits."""
+        """Return True while an announcement runs, waits or Kodi continues after one."""
         return not self._idle.is_set()
 
     async def wait_idle(self) -> None:
@@ -195,16 +208,33 @@ class Announcer:
 
     @contextlib.asynccontextmanager
     async def command(self) -> AsyncIterator[None]:
-        """Run a command after the announcements; announcements wait for it."""
+        """Run a command after the announcements; announcements wait for it.
+
+        Commands the command runs itself (in the same task, such as a handover
+        stopping playback) don't wait again.
+        """
+        task = asyncio.current_task()
+        if task in self._command_tasks:
+            yield
+            return
         await self._idle.wait()
         self._commands += 1
         self._no_commands.clear()
+        if task is not None:
+            self._command_tasks.add(task)
         try:
             yield
         finally:
+            self._command_tasks.discard(task)  # type: ignore[arg-type]
             self._commands -= 1
             if not self._commands:
                 self._no_commands.set()
+
+    @contextlib.asynccontextmanager
+    async def exclusive(self) -> AsyncIterator[None]:
+        """Have Kodi to oneself, like an announcement (commands wait meanwhile)."""
+        async with self._turn():
+            yield
 
     @property
     def _notifications(self) -> bool:
@@ -240,6 +270,12 @@ class Announcer:
         continues after the last one. If an announcement is cancelled, Kodi
         still continues (in the background).
         """
+        async with self._turn():
+            return await self._announce(url, volume, max_duration, start_timeout)
+
+    @contextlib.asynccontextmanager
+    async def _turn(self) -> AsyncIterator[None]:
+        """Wait for the turn: earlier announcements, Kodi continuing, running commands."""
         self._waiting += 1
         self._idle.clear()
         acquired = False
@@ -247,49 +283,49 @@ class Announcer:
             async with self._lock:
                 acquired = True
                 self._waiting -= 1
-                try:
-                    return await self._announce(url, volume, max_duration, start_timeout)
-                except BaseException:
-                    # Cancelled or failed unexpectedly: don't keep a stale snapshot.
-                    if self._session is not None and not self._waiting:
-                        self._finish_in_background()
-                    raise
+                if (finishing := self._finishing) is not None and not finishing.done():
+                    with contextlib.suppress(Exception):
+                        await asyncio.shield(finishing)
+                await self._no_commands.wait()
+                yield
         finally:
             if not acquired:
                 self._waiting -= 1
-                if self._session is not None and not self._waiting and not self._lock.locked():
-                    self._finish_in_background()  # the one before passed on to this one
+            if (
+                self._session is not None
+                and not self._waiting
+                and not self._lock.locked()
+                and not self._is_finishing
+            ):
+                # Cancelled or failed while Kodi was interrupted, or the next
+                # announcement this one passed on to was cancelled.
+                self._start_finish(orphaned=True)
             self._update_idle()
+
+    @property
+    def _is_finishing(self) -> bool:
+        # A finished task counts as over even before its done callback ran.
+        return self._finishing is not None and not self._finishing.done()
 
     def _update_idle(self) -> None:
-        if self._waiting == 0 and not self._lock.locked():
+        if self._waiting == 0 and not self._lock.locked() and not self._is_finishing:
             self._idle.set()
 
-    def _finish_in_background(self) -> None:
-        """Continue playback after a cancelled announcement."""
-        self._waiting += 1  # counted at once, so nothing slips in before it
+    def _start_finish(self, *, orphaned: bool = False) -> asyncio.Task[Outcome]:
+        """Continue playback in a task of its own, so a cancelled caller can't cut it short."""
         self._idle.clear()
-        task = asyncio.get_running_loop().create_task(self._finish_orphaned())
-        self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
+        task = self._create_task(self._finish(), f"{__name__} continue playback")
+        self._finishing = task
 
-    async def _finish_orphaned(self) -> None:
-        acquired = False
-        try:
-            async with self._lock:
-                acquired = True
-                self._waiting -= 1
-                if self._session is not None and not self._waiting:
-                    try:
-                        await self._finish()
-                    except (AnnounceError, KodiError) as err:
-                        _LOGGER.warning(
-                            "Kodi could not continue after a cancelled announcement: %s", err
-                        )
-        finally:
-            if not acquired:
-                self._waiting -= 1
+        def done(task: asyncio.Task[Outcome]) -> None:
+            if self._finishing is task:
+                self._finishing = None
+            if not task.cancelled() and (err := task.exception()) is not None and orphaned:
+                _LOGGER.warning("Kodi could not continue after the announcement: %s", err)
             self._update_idle()
+
+        task.add_done_callback(done)
+        return task
 
     async def _announce(
         self, url: str, volume: int | None, max_duration: float, start_timeout: float
@@ -297,10 +333,9 @@ class Announcer:
         if await self._muted():
             _LOGGER.info("Kodi is muted; announcement %s not played", redact_url(url))
             if self._session is not None and not self._waiting:
-                await self._finish()  # an earlier announcement played
+                await asyncio.shield(self._start_finish())  # an earlier announcement played
             return Outcome.MUTED
         if self._session is None:
-            await self._no_commands.wait()
             self._session = await self._snapshot()
         session = self._session
         session.start_timeout = start_timeout
@@ -321,10 +356,11 @@ class Announcer:
             self._session = None
             with contextlib.suppress(KodiError):
                 await self._restore_volume(session)
+                await self._put_back_after_clip(session)
             return Outcome.OVERRIDE
         if self._waiting and clip_error is None:
             return Outcome.PASSED_ON
-        outcome = await self._finish()
+        outcome = await asyncio.shield(self._start_finish())
         if clip_error is not None:
             raise clip_error
         return outcome
@@ -355,7 +391,7 @@ class Announcer:
         if player is None:
             return snapshot
         player_id, player_type = player
-        properties = ["playlistid", "position", "time", "speed"]
+        properties = ["playlistid", "position", "time", "speed", "shuffled"]
         if player_type == "video":
             properties += STREAM_PROPERTIES
         props = await self.client.call(
@@ -368,6 +404,8 @@ class Announcer:
         file = item.get("file") or None
         playback = Playback(kind="item", file=file, time=props.get("time"))
         playback.paused = props.get("speed") == 0
+        playback.player_type = player_type
+        playback.shuffled = bool(props.get("shuffled"))
         playback.audio = Stream.from_kodi(props.get("currentaudiostream"))
         playback.subtitle = Stream.from_kodi(props.get("currentsubtitle"))
         if "subtitleenabled" in props:
@@ -397,7 +435,7 @@ class Announcer:
         result = await self.client.call(
             "Playlist.GetItems", {"playlistid": playlist_id, "properties": ["file"]}
         )
-        items = [portable_item(raw) for raw in (result or {}).get("items") or []]
+        items = [_same_kodi_item(raw) for raw in (result or {}).get("items") or []]
         if any(item is None for item in items):
             return None
         return [item for item in items if item is not None]
@@ -576,17 +614,28 @@ class Announcer:
         if (app or {}).get("volume") == session.volume_set:  # not changed by someone meanwhile
             await self.client.call("Application.SetVolume", {"volume": session.volume})
 
-    async def _restore_playlists(self, session: Snapshot, *playlist_ids: int) -> None:
-        """Put back playlists that Kodi replaced when it opened a single item."""
-        for playlist_id in playlist_ids:
-            if (saved := session.playlists.get(playlist_id)) is None:
-                continue  # it had entries that can't be added again
-            if await self._playlist(playlist_id) == saved:
-                continue
-            # Kodi handles both in order; clearing doesn't stop what plays.
-            await self.client.call("Playlist.Clear", {"playlistid": playlist_id})
-            if saved:
-                await self.client.call("Playlist.Add", {"playlistid": playlist_id, "item": saved})
+    async def _put_back(
+        self, session: Snapshot, playlist_id: int, ours: list[dict[str, Any]]
+    ) -> None:
+        """Put back a playlist that Kodi replaced when Better Kodi opened a single item.
+
+        Only if it still holds just what Better Kodi opened: a playlist that
+        someone or an add-on filled meanwhile is left alone.
+        """
+        if (saved := session.playlists.get(playlist_id)) is None:
+            return  # it had entries that can't be added again
+        current = await self._playlist(playlist_id)
+        if current is None or current == saved or not _same_items(current, ours):
+            return
+        # Kodi handles both in order; clearing doesn't stop what plays.
+        await self.client.call("Playlist.Clear", {"playlistid": playlist_id})
+        if saved:
+            await self.client.call("Playlist.Add", {"playlistid": playlist_id, "item": saved})
+        session.put_back.add(playlist_id)
+
+    async def _put_back_after_clip(self, session: Snapshot) -> None:
+        if session.clip is not None:
+            await self._put_back(session, MUSIC_PLAYLIST, [{"file": session.clip}])
 
     async def _stop_clip(self, session: Snapshot) -> None:
         """Stop the clip if it still plays (a cancelled announcement)."""
@@ -605,31 +654,45 @@ class Announcer:
 
     async def _restore(self, session: Snapshot) -> Outcome:
         await self._stop_clip(session)
-        await self._restore_playlists(session, *PLAYLISTS)
+        await self._put_back_after_clip(session)
         playback = session.playback
         if playback is None:
             return Outcome.DONE
         if await self._active_player() is not None:
             _LOGGER.info("Kodi plays something else now; Better Kodi doesn't continue playback")
             return Outcome.OVERRIDE
+        # A playlist put back while shuffled was shuffled anew by Kodi: open it in
+        # the noted order and shuffle again once it plays.
+        reshuffle = (
+            playback.kind == "playlist"
+            and playback.shuffled
+            and playback.playlist_id in session.put_back
+        )
+        replaced: int | None = None  # the playlist Kodi replaces when opening a single item
         if playback.kind == "playlist":
-            await self.client.call(
-                "Player.Open",
-                {"item": {"playlistid": playback.playlist_id, "position": playback.position}},
-            )
+            params: dict[str, Any] = {
+                "item": {"playlistid": playback.playlist_id, "position": playback.position}
+            }
+            if reshuffle:
+                params["options"] = {"shuffled": False}
         else:
             assert playback.item is not None
-            params: dict[str, Any] = {"item": playback.item}
+            params = {"item": playback.item}
             if playback.seconds:
                 params["options"] = {"resume": playback.time}
-            await self.client.call("Player.Open", params)
-
-        player_id = await self._wait_for_start(playback, session.start_timeout)
+            if playback.kind == "item":
+                replaced = VIDEO_PLAYLIST if playback.player_type == "video" else MUSIC_PLAYLIST
+        await self.client.call("Player.Open", params)
+        try:
+            player_id = await self._wait_for_start(playback, session.start_timeout)
+        finally:
+            if replaced is not None:
+                # Kodi plays the item from the playlist it replaced; put the old one
+                # back (Kodi continues with it after the item, like after any entry).
+                with contextlib.suppress(KodiError):
+                    await self._put_back(session, replaced, [playback.item])
         if player_id is None:
             return Outcome.OVERRIDE
-        if playback.kind != "playlist":
-            # Opening a single item replaced its playlist (the queue) with it.
-            await self._restore_playlists(session, *PLAYLISTS)
         if playback.kind != "channel" and playback.seconds:
             await self._seek(player_id, playback)
         if playback.audio or playback.subtitle:
@@ -641,9 +704,12 @@ class Announcer:
         ):
             await _try(
                 self.client.call(
-                    "Player.SetRepeat",
-                    {"playerid": player_id, "repeat": session.music_repeat},
+                    "Player.SetRepeat", {"playerid": player_id, "repeat": session.music_repeat}
                 )
+            )
+        if reshuffle:
+            await _try(
+                self.client.call("Player.SetShuffle", {"playerid": player_id, "shuffle": True})
             )
         if playback.paused:
             await self.client.call("Player.PlayPause", {"playerid": player_id, "play": False})
@@ -833,3 +899,31 @@ def _same_file(playing: str | None, url: str) -> bool:
     if not playing:
         return False
     return playing == url or unquote(playing) == unquote(url)
+
+
+# Playlist entries as items to add again on the same Kodi: library entries by ID
+# (keeps their library link), everything else by path.
+SAME_KODI_ID_KEYS = {**LIBRARY_ID_KEYS, "song": "songid"}
+
+
+def _same_kodi_item(raw: dict[str, Any]) -> dict[str, Any] | None:
+    key = SAME_KODI_ID_KEYS.get(raw.get("type") or "")
+    if key and isinstance(raw.get("id"), int) and raw["id"] >= 0:
+        return {key: raw["id"]}
+    if file := raw.get("file"):
+        return {"file": file}
+    return None
+
+
+def _same_items(current: list[dict[str, Any]], ours: list[dict[str, Any] | None]) -> bool:
+    """Return True if a playlist holds just the given items (by ID or path)."""
+    if len(current) != len(ours):
+        return False
+    for have, want in zip(current, ours, strict=True):
+        if want is None:
+            return False
+        if have != want and not (
+            have.get("file") and _same_file(have.get("file"), want.get("file") or "")
+        ):
+            return False
+    return True

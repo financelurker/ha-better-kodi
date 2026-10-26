@@ -1,9 +1,8 @@
 """Better Kodi media player: mirrors a Kodi entity and adds queue features."""
 
 import asyncio
-from collections.abc import AsyncIterator, Awaitable
+from collections.abc import AsyncIterator, Awaitable, Callable
 import contextlib
-from contextvars import ContextVar
 from datetime import datetime
 import logging
 import re
@@ -122,8 +121,6 @@ LINK_IN_TEXT = re.compile(r"https?://\S+")
 TRAILING_PUNCTUATION = ".,;:!?)]}>'\"»“”"
 PLAYABLE_SCHEMES = frozenset({"http", "https", *KODI_PATH_SCHEMES})
 ANNOUNCE_VOLUME = "announce_volume"  # in "extra" of play_media: 0..100
-# Set while a command runs, so that commands it calls (handover → stop) don't wait for it
-_IN_COMMAND: ContextVar[bool] = ContextVar(f"{DOMAIN}_in_command", default=False)
 
 
 async def async_setup_entry(
@@ -154,7 +151,6 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
         self.device_entry = async_entity_id_to_device(hass, self._source_entity_id)
         self._queue_refresher: Debouncer[Any] | None = None
         self._choice_items: dict[str, BrowseMedia] = {}
-        self._woken_for_announcement: float | None = None  # when, if Better Kodi woke Kodi
 
     # --- Lifecycle ----------------------------------------------------------
 
@@ -355,26 +351,23 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
     async def _command(self, *, uses_kodi: bool = True) -> AsyncIterator[None]:
         """Run a command after running announcements; they wait for it in turn."""
         if uses_kodi:
-            self._woken_for_announcement = None  # used from Home Assistant: don't switch off
-        if _IN_COMMAND.get():
-            yield
-            return
+            self._data.mark_used()  # used from Home Assistant: don't switch off
         async with self._data.announcer.command():
-            token = _IN_COMMAND.set(True)
-            try:
-                yield
-            finally:
-                _IN_COMMAND.reset(token)
+            yield
 
     async def _forward(self, service: str, **data: Any) -> None:
         async with self._command():
-            await self.hass.services.async_call(
-                MEDIA_PLAYER_DOMAIN,
-                service,
-                {ATTR_ENTITY_ID: self._source_entity_id, **data},
-                blocking=True,
-                context=self._context,
-            )
+            await self._call_source(service, **data)
+
+    async def _call_source(self, service: str, **data: Any) -> None:
+        """Call a service of the Kodi entity (not waiting for announcements)."""
+        await self.hass.services.async_call(
+            MEDIA_PLAYER_DOMAIN,
+            service,
+            {ATTR_ENTITY_ID: self._source_entity_id, **data},
+            blocking=True,
+            context=self._context,
+        )
 
     @property
     def _wake_on_lan(self) -> bool:
@@ -382,21 +375,26 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
 
     async def async_turn_on(self) -> None:
         """Turn Kodi on: Wake on LAN, or the Kodi integration's turn-on automation."""
-        if self._wake_on_lan:
-            await self._async_send_wake_on_lan()
-        else:
-            await self._forward(SERVICE_TURN_ON)
+        async with self._command():
+            if self._wake_on_lan:
+                await self._async_send_wake_on_lan()
+            else:
+                await self._call_source(SERVICE_TURN_ON)
 
     async def async_turn_off(self) -> None:
         """Turn Kodi off with the chosen Kodi command, or the turn-off automation."""
+        async with self._command():
+            await self._async_switch_off()
+
+    async def _async_switch_off(self, still_wanted: Callable[[], bool] | None = None) -> None:
         mode = get_option(self._entry, CONF_POWER_OFF)
         if (method := POWER_OFF_METHODS.get(mode)) is None:
-            await self._forward(SERVICE_TURN_OFF)
+            await self._call_source(SERVICE_TURN_OFF)
             return
         if self.state == MediaPlayerState.OFF:
             return  # already off; Kodi wouldn't answer
         try:
-            await self._run(async_power_off(self._data.client, method))
+            await self._run(async_power_off(self._data.client, method, still_wanted=still_wanted))
         except PowerOffNotAllowed as err:
             raise HomeAssistantError(
                 translation_domain=DOMAIN,
@@ -592,8 +590,12 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
         source = self.hass.states.get(self._source_entity_id)
         was_off = source is not None and source.state == STATE_OFF
         await self._async_wake_kodi()
-        if was_off and get_option(self._entry, CONF_WAKE) and self._woken_for_announcement is None:
-            self._woken_for_announcement = time.monotonic()
+        if (
+            was_off
+            and get_option(self._entry, CONF_WAKE)
+            and self._data.woken_for_announcement is None
+        ):
+            self._data.woken_for_announcement = time.monotonic()
         try:
             outcome = await self._data.announcer.announce(
                 url,
@@ -617,38 +619,46 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
             raise self._kodi_error(err) from err
         else:
             if outcome is Outcome.OVERRIDE:
-                self._woken_for_announcement = None  # in use: don't switch off
+                self._data.woken_for_announcement = None  # in use: don't switch off
         finally:
             self._schedule_queue_refresh()
             await self._async_power_off_after_announcement()
 
     async def _async_power_off_after_announcement(self) -> None:
-        """Switch Kodi off again if it was woken for announcements and nobody uses it."""
-        woken_at = self._woken_for_announcement
-        if woken_at is None or self._data.announcer.busy:
+        """Switch Kodi off again if it was woken for announcements and nobody uses it.
+
+        Runs with Kodi to itself, like an announcement: a command sent now
+        waits, and one sent since the wake keeps Kodi on.
+        """
+        announcer = self._data.announcer
+        if self._data.woken_for_announcement is None or announcer.busy:
             return  # not woken for this, or the next announcement switches off
-        self._woken_for_announcement = None
-        try:
-            players = await self._data.client.call("Player.GetActivePlayers") or []
-            seconds = int(time.monotonic() - woken_at) - 1
-            idle_since_wake = True
-            if seconds >= 1:
-                condition = f"System.IdleTime({seconds})"
-                result = await self._data.client.call(
-                    "XBMC.GetInfoBooleans", {"booleans": [condition]}
-                )
-                idle_since_wake = (result or {}).get(condition) is not False
-        except KodiError as err:
-            _LOGGER.debug("Not switching Kodi off after the announcement: %s", err)
-            return
-        if players or not idle_since_wake:
-            _LOGGER.debug("Kodi is in use; not switching it off after the announcement")
-            return
-        _LOGGER.debug("Switching Kodi off again after the announcement")
-        try:
-            await self.async_turn_off()
-        except HomeAssistantError as err:
-            _LOGGER.warning("Could not switch Kodi off after the announcement: %s", err)
+        async with announcer.exclusive():
+            if (woken_at := self._data.woken_for_announcement) is None:
+                return
+            self._data.woken_for_announcement = None
+            uses = self._data.uses
+            try:
+                players = await self._data.client.call("Player.GetActivePlayers") or []
+                seconds = int(time.monotonic() - woken_at) - 1
+                idle_since_wake = True
+                if seconds >= 1:
+                    condition = f"System.IdleTime({seconds})"
+                    result = await self._data.client.call(
+                        "XBMC.GetInfoBooleans", {"booleans": [condition]}
+                    )
+                    idle_since_wake = (result or {}).get(condition) is not False
+            except KodiError as err:
+                _LOGGER.debug("Not switching Kodi off after the announcement: %s", err)
+                return
+            if players or not idle_since_wake or self._data.uses != uses:
+                _LOGGER.debug("Kodi is in use; not switching it off after the announcement")
+                return
+            _LOGGER.debug("Switching Kodi off again after the announcement")
+            try:
+                await self._async_switch_off(still_wanted=lambda: self._data.uses == uses)
+            except HomeAssistantError as err:
+                _LOGGER.warning("Could not switch Kodi off after the announcement: %s", err)
 
     async def _async_media_source_item(self, url: str) -> dict[str, Any]:
         """Return the best Kodi item for a resolved media source URL (see backends)."""
@@ -719,7 +729,7 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
             _LOGGER.debug("%s is off; waking it before sending", self._source_entity_id)
             async with asyncio.timeout(timeout):
                 if not wake_on_lan:
-                    await self._forward(SERVICE_TURN_ON)
+                    await self._call_source(SERVICE_TURN_ON)  # not _forward: no waiting here
                     await awake.wait()
                 sent = 0
                 while wake_on_lan and not awake.is_set():

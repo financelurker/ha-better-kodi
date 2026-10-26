@@ -263,3 +263,33 @@ async def test_saving_options_keeps_the_announcer(hass: HomeAssistant, playing) 
     await hass.config_entries.async_reload(entry.entry_id)
     await hass.async_block_till_done()
     assert entry.runtime_data.announcer is announcer
+
+
+async def test_command_while_switching_off_keeps_kodi_on(hass: HomeAssistant, asleep) -> None:
+    """A link sent just while Better Kodi decides to switch Kodi off again."""
+    _, player, kodi, _ = asleep
+    deciding = asyncio.Event()
+    call = kodi.call
+
+    async def slow_capability_check(method: str, params: Any = None) -> Any:
+        if method == "System.GetProperties":
+            deciding.set()
+            await asyncio.sleep(0.3)
+        return await call(method, params)
+
+    kodi.call = slow_capability_check
+    task = hass.async_create_task(announce_media(hass, player))
+    await deciding.wait()
+    await hass.services.async_call(
+        MP_DOMAIN,
+        "play_media",
+        {
+            ATTR_ENTITY_ID: player,
+            ATTR_MEDIA_CONTENT_ID: "https://cdn.example/b.mp4",
+            ATTR_MEDIA_CONTENT_TYPE: "url",
+        },
+        blocking=True,
+    )
+    await task
+    assert "System.Suspend" not in kodi.method_calls()
+    assert kodi.files() == ["https://cdn.example/b.mp4"]

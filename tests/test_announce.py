@@ -340,6 +340,76 @@ async def test_announcements_wait_for_running_commands(
     assert kodi.clips == [CLIP]
 
 
+async def test_shuffled_music_continues_with_the_same_song(
+    kodi: FakeKodi, announcer: Announcer
+) -> None:
+    songs = [f"smb://nas/music/{n}.flac" for n in range(4)]
+    kodi._Playlist_Add(0, [{"file": song} for song in songs])
+    kodi.music_shuffled = True  # shown order: as added (shuffled before)
+    kodi.player_type, kodi.position, kodi.time = "audio", 1, {"minutes": 1, "seconds": 5}
+    await announcer.announce(CLIP)
+    assert kodi.player_type == "audio"
+    assert kodi._Player_GetItem(0, ["file"])["item"]["file"] == songs[1]
+    assert kodi.music_shuffled
+
+
+async def test_playlist_an_add_on_fills_is_left_alone(kodi: FakeKodi, announcer: Announcer) -> None:
+    """After reopening a single item, an add-on (Up Next, say) builds its own playlist."""
+    kodi.start_video_outside_queue({"file": "plugin://plugin.video.jellyfin/?id=1"}, 600)
+
+    def add_on_fills() -> None:
+        kodi.playlist.append({"file": "plugin://plugin.video.jellyfin/?id=2", "type": "unknown"})
+
+    kodi.after_open_single = add_on_fills
+    await announcer.announce(CLIP)
+    assert [item["file"] for item in kodi.playlist] == [
+        "plugin://plugin.video.jellyfin/?id=1",
+        "plugin://plugin.video.jellyfin/?id=2",
+    ]
+
+
+async def test_cancelled_while_continuing_kodi_still_continues(
+    kodi: FakeKodi, announcer: Announcer
+) -> None:
+    """An automation restarted while Kodi starts the movie again."""
+    kodi.start_video_outside_queue(
+        {"type": "movie", "id": 7, "file": "smb://nas/movie/7.mkv"}, seconds=754
+    )
+    queue = kodi.files()
+    kodi.resume_dialog = True  # starting again takes a moment (the dialog)
+    task = asyncio.ensure_future(announcer.announce(CLIP))
+    for _ in range(250):
+        if kodi._dialog:
+            break
+        await asyncio.sleep(0.02)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await asyncio.wait_for(announcer.wait_idle(), 5)
+    assert kodi.current_outside["id"] == 7
+    assert kodi.time["minutes"] == 12
+    assert kodi.files() == queue
+
+
+async def test_tasks_started_by_a_command_wait_for_announcements(
+    kodi: FakeKodi, announcer: Announcer
+) -> None:
+    """Only the command's own task skips the wait, not tasks it started."""
+    seen: list[bool] = []
+
+    async def started_by_the_command() -> None:
+        await asyncio.sleep(0.2)  # by now the announcement plays
+        seen.append(announcer.busy)
+        async with announcer.command():
+            seen.append(announcer.busy)
+
+    async with announcer.command():
+        later = asyncio.ensure_future(started_by_the_command())
+    await announcer.announce(CLIP)
+    await later
+    assert seen == [True, False]
+
+
 def test_streams_are_found_by_language_and_name() -> None:
     german = Stream(1, "ger", "Deutsch 5.1")
     assert german.find_in(AUDIO) == 1
