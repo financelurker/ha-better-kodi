@@ -80,7 +80,10 @@ class FakeKodi:
         self.notify: Callable[[str, dict[str, Any]], None] | None = None
         # Kodi's current playlist (MUSIC, VIDEO or None) and the position before a stop
         self.current_playlist: int | None = None
-        self.resolved: dict[str, str] = {}  # add-on path -> stream URL once it plays
+        self.resolved: dict[str, str] = {}
+        self.unavailable: set[str] = (
+            set()
+        )  # files Kodi refuses to add (drive gone, say)  # add-on path -> stream URL once it plays
         self.position_before_stop = -1
 
     # Helpers for tests ----------------------------------------------------------
@@ -178,6 +181,10 @@ class FakeKodi:
         if handler is None:
             raise KodiRpcError(method, -32601, "Method not found.")
         return handler(**params)
+
+    async def ping(self) -> None:
+        """Like KodiClient.ping."""
+        await self.call("JSONRPC.Ping")
 
     def _JSONRPC_Ping(self) -> str:
         return "pong"
@@ -507,6 +514,11 @@ class FakeKodi:
     def _Playlist_Insert(self, playlistid: int, position: int, item: Any) -> str:
         playlist = self._list(playlistid)
         if not 0 <= position <= len(playlist):
+            raise KodiRpcError("Playlist.Insert", -32602, "Invalid params.")
+        if any(
+            entry.get("file") in self.unavailable
+            for entry in (item if isinstance(item, list) else [item])
+        ):
             raise KodiRpcError("Playlist.Insert", -32602, "Invalid params.")
         entries = [
             self._to_playlist_item(entry) for entry in (item if isinstance(item, list) else [item])

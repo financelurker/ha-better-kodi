@@ -45,6 +45,7 @@ STOP_TIMEOUT = 5.0
 # How often to look whether a reopened item that was added to its playlist
 # (see _keep_queue_after) still plays, when no notification says so
 TAIL_CHECK_INTERVAL = 10.0
+TAIL_CHECK_TIMEOUT = 3.0
 # Kodi shows a player's playlist length only while that playlist is Kodi's current one
 PLAYLIST_LENGTH_LABEL = {
     "video": "VideoPlayer.PlaylistLength",
@@ -218,6 +219,7 @@ class Announcer:
         self._unawaited: set[asyncio.Task[Outcome]] = set()  # callers cancelled meanwhile
         self._listening: _Listening | None = None
         self._tail_tasks: set[asyncio.Task[Any]] = set()
+        self._tail_checks: set[asyncio.Future[bool]] = set()
         self._tail_changed = asyncio.Event()
 
     def close(self) -> None:
@@ -320,6 +322,8 @@ class Announcer:
             async with self._lock:
                 acquired = True
                 self._waiting -= 1
+                for check in list(self._tail_checks):
+                    check.cancel()  # tidying up the playlist can wait
                 if (finishing := self._finishing) is not None and not finishing.done():
                     with contextlib.suppress(Exception):
                         await asyncio.shield(finishing)
@@ -719,26 +723,39 @@ class Announcer:
         current = await self._playlist(playlist_id)
         if saved is None or current is None or len(current) != 1:
             return  # entries that can't be added again, or someone changed the playlist
-        props = await self.client.call(
-            "Player.GetProperties", {"playerid": player_id, "properties": ["shuffled", "repeat"]}
-        )
-        if props.get("shuffled") or props.get("repeat") not in (None, "off"):
+        try:
+            props = await self.client.call(
+                "Player.GetProperties",
+                {"playerid": player_id, "properties": ["shuffled", "repeat"]},
+            )
+        except KodiRpcError:
+            props = None  # the item stopped meanwhile
+        if props is None or props.get("shuffled") or props.get("repeat") not in (None, "off"):
             # Kodi would reshuffle the inserted entries or go on after the last
             # one; the playlist is put back as it is, Kodi goes on with it.
-            _LOGGER.debug("Shuffle or repeat is on; Kodi goes on with the playlist after the item")
+            _LOGGER.debug("Kodi goes on with the playlist after the item (shuffle, repeat, stop)")
             await self._put_back(session, playlist_id, [playback.item], any_single=True)
             return
         # One entry per call: Kodi moves its current entry by one per insert,
         # also when one insert adds several entries.
-        for index, entry in enumerate(saved):
-            await self.client.call(
-                "Playlist.Insert", {"playlistid": playlist_id, "position": index, "item": entry}
-            )
+        inserted: list[dict[str, Any]] = []
+        for entry in saved:
+            try:
+                await self.client.call(
+                    "Playlist.Insert",
+                    {"playlistid": playlist_id, "position": len(inserted), "item": entry},
+                )
+            except KodiRpcError as err:
+                # Gone meanwhile (a removed drive, a deleted library entry), as Kodi
+                # would have skipped it when playing the playlist.
+                _LOGGER.debug("Kodi refused an entry of the playlist: %s", err)
+            else:
+                inserted.append(entry)
         # How Kodi shows the item now (an add-on item by its resolved path, say)
         shown = await self._playlist(playlist_id)
-        tail = len(saved)
+        tail = len(inserted)
         seen = shown[tail] if shown is not None and len(shown) > tail else None
-        self._watch_tail(_Tail(playlist_id, saved, [playback.item, seen]))
+        self._watch_tail(_Tail(playlist_id, inserted, [playback.item, seen]))
 
     def _watch_tail(self, tail: _Tail) -> None:
         task = self._create_task(self._remove_tail_later(tail), f"{__name__} remove reopened item")
@@ -751,13 +768,30 @@ class Announcer:
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(self._tail_changed.wait(), TAIL_CHECK_INTERVAL)
             self._tail_changed.clear()
+            # A check of its own, which an announcement cancels instead of waiting
+            # for it (it is repeated later).
+            check = asyncio.ensure_future(self._check_tail(tail))
+            self._tail_checks.add(check)
             try:
+                if await asyncio.shield(check):
+                    return
+            except asyncio.CancelledError:
+                if not check.cancelled():
+                    check.cancel()
+                    raise  # the watcher itself was cancelled
+            finally:
+                self._tail_checks.discard(check)
+
+    async def _check_tail(self, tail: _Tail) -> bool:
+        try:
+            async with asyncio.timeout(TAIL_CHECK_TIMEOUT):
+                await self.client.ping()  # only while Kodi answers
+            async with asyncio.timeout(TAIL_CHECK_TIMEOUT), self.command():
                 # Like a command: announcements and queue commands don't run meanwhile.
-                async with self.command():
-                    if await self._remove_tail(tail):
-                        return
-            except KodiError as err:
-                _LOGGER.debug("Kodi not reachable to tidy up the playlist yet: %s", err)
+                return await self._remove_tail(tail)
+        except (KodiError, TimeoutError) as err:
+            _LOGGER.debug("Kodi not reachable to tidy up the playlist yet: %s", err)
+            return False
 
     async def _remove_tail(self, tail: _Tail) -> bool:
         """Remove the item's entry unless it plays; True when done (or no longer ours)."""
@@ -845,7 +879,12 @@ class Announcer:
                 # Kodi plays the item from the playlist it replaced; put the old one back.
                 with contextlib.suppress(KodiError):
                     if not playback.playlist_current and player_id is not None:
-                        await self._keep_queue_after(session, replaced, playback, player_id)
+                        try:
+                            await self._keep_queue_after(session, replaced, playback, player_id)
+                        except KodiError:
+                            await self._put_back(
+                                session, replaced, [playback.item], any_single=True
+                            )
                     else:
                         # Kodi went on with the playlist after the item: it still does.
                         # (Also if the item didn't start: the playlist mustn't get lost.)

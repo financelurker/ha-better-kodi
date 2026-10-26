@@ -243,6 +243,46 @@ async def test_movie_outside_a_shuffled_queue(kodi: FakeKodi, announcer: Announc
     assert kodi.position == -1
 
 
+async def test_an_entry_kodi_refuses_doesnt_cost_the_queue(
+    kodi: FakeKodi, announcer: Announcer
+) -> None:
+    kodi.start_video_outside_queue(MOVIE_7, seconds=754)
+    first, second = kodi.files()
+    kodi.unavailable = {first}  # the drive is gone
+    await announcer.announce(CLIP)
+    assert kodi.files() == [second, MOVIE_7["file"]]
+    assert kodi.position == 1
+    kodi.video_ends()
+    for _ in range(100):
+        if kodi.files() == [second]:
+            break
+        await asyncio.sleep(0.05)
+    assert kodi.files() == [second]
+
+
+async def test_tidying_up_doesnt_hold_up_announcements(
+    kodi: FakeKodi, announcer: Announcer
+) -> None:
+    """Kodi hangs on the tidy-up check: an announcement doesn't wait for it."""
+    kodi.start_video_outside_queue(MOVIE_7, seconds=754)
+    await announcer.announce(CLIP)
+    call = kodi.call
+    hanging = asyncio.Event()
+
+    async def hang_on_ping(method: str, params: Any = None) -> Any:
+        if method == "Playlist.GetItems" and kodi.player_active and not hanging.is_set():
+            hanging.set()
+            await asyncio.sleep(5)
+        return await call(method, params)
+
+    kodi.call = hang_on_ping
+    await asyncio.wait_for(hanging.wait(), 2)
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    await announcer.announce(CLIP_2)
+    assert loop.time() - started < 2.5  # the clip plays 0.6 s; the check would hang 5 s
+
+
 async def test_live_tv_is_switched_back(kodi: FakeKodi, announcer: Announcer) -> None:
     kodi.start_video_outside_queue({"type": "channel", "id": 3, "file": "pvr://channels/3"}, 900)
     await announcer.announce(CLIP)
