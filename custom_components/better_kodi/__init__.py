@@ -24,6 +24,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.typing import ConfigType
 
 from . import backends
+from .announce import Announcer
 from .assist import transfer_exposure
 from .const import (
     CONF_HIDE_SOURCE,
@@ -63,6 +64,7 @@ class BetterKodiData:
 
     client: KodiClient
     queue: KodiQueue
+    announcer: Announcer
     source_entity_id: str
     web_session: aiohttp.ClientSession
     addons: frozenset[str] = frozenset()
@@ -172,6 +174,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: BetterKodiConfigEntry) -
     data = BetterKodiData(
         client=client,
         queue=KodiQueue(client, look_up_title, youtube_thumbnails=online_lookups),
+        announcer=Announcer(client),
         source_entity_id=source_entity_id,
         web_session=web_session,
     )
@@ -195,6 +198,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: BetterKodiConfigEntry) -
     entry.runtime_data = data
 
     def on_notification(method: str, payload: dict[str, Any]) -> None:
+        data.announcer.on_notification(method, payload)
         if method.startswith(NOTIFICATIONS):
             data.notify_queue_changed()
 

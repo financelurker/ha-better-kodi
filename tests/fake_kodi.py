@@ -1,12 +1,16 @@
 """A small in-memory Kodi that answers the JSON-RPC calls Better Kodi uses."""
 
+from collections.abc import Callable
 from copy import deepcopy
+import time
 from typing import Any
 from urllib.parse import urlsplit
 
 from custom_components.better_kodi.kodi_client import KodiConnectionError, KodiRpcError
 
+MUSIC = 0
 VIDEO = 1
+AUDIO_EXTENSIONS = (".mp3", ".wav", ".flac", ".ogg")
 
 
 class FakeKodi:
@@ -39,6 +43,29 @@ class FakeKodi:
             "canreboot": True,
         }
         self.notifications: list[dict[str, Any]] = []
+        # Announcements: an audio player, volume, Kodi's idle timer, streams
+        self.player_type = "video"
+        self.music_playlist: list[dict[str, Any]] = []
+        self.volume = 50
+        self.muted = False
+        self.speed = 1
+        self.clip_length = 0.6  # seconds a clip plays
+        self.clip_starts = True
+        self._clip: tuple[str, float] | None = None  # (file, started)
+        self.clips: list[str] = []
+        self.idle_since = time.monotonic() - 3600
+        self.audio_streams: list[dict[str, Any]] = []
+        self.audio_index = 0
+        self.subtitles: list[dict[str, Any]] = []
+        self.subtitle_index = 0
+        self.subtitle_enabled = False
+        self.forget_streams = False  # opening again starts with the first tracks
+        self.websocket = False
+        self.resume_dialog = False  # an add-on asks "Resume from …" when an item opens
+        self._dialog: dict[str, Any] | None = None
+        self.window_label = "Home"
+        # Kodi's notifications over WebSocket, if a test listens
+        self.notify: Callable[[str, dict[str, Any]], None] | None = None
 
     # Helpers for tests ----------------------------------------------------------
 
@@ -56,6 +83,49 @@ class FakeKodi:
         """Return the called method names."""
         return [method for method, _ in self.calls]
 
+    def press_key(self) -> None:
+        """Someone uses the remote."""
+        self.idle_since = time.monotonic()
+
+    def user_stops(self) -> None:
+        """Someone presses stop."""
+        self.press_key()
+        self._stop(end=False)
+
+    def user_plays(self, file: str) -> None:
+        """Someone starts something else on the TV."""
+        self.press_key()
+        self._clip = None
+        self.play_outside_queue(file)
+        self.player_type = "video"
+        self._emit("Player.OnPlay")
+
+    def start_video_outside_queue(self, item: dict[str, Any], seconds: int = 0) -> None:
+        """Pretend a library item or file plays that was not started from the queue."""
+        self.player_active = True
+        self.player_type = "video"
+        self.position = -1
+        self.current_outside = dict(item)
+        self.time = _time(seconds)
+
+    def _emit(self, method: str, **data: Any) -> None:
+        if self.notify is not None:
+            self.notify(method, data)
+
+    def _stop(self, *, end: bool) -> None:
+        if not self.player_active:
+            return
+        self.player_active = False
+        self.position = -1
+        self._clip = None
+        self.player_type = "video"
+        self._emit("Player.OnStop", end=end, item={"type": "unknown"})
+
+    def _advance(self) -> None:
+        """Let a clip play on; it ends by itself after clip_length."""
+        if self._clip is not None and time.monotonic() - self._clip[1] >= self.clip_length:
+            self._stop(end=True)
+
     # JSON-RPC --------------------------------------------------------------------
 
     async def call(self, method: str, params: dict[str, Any] | None = None) -> Any:
@@ -64,6 +134,7 @@ class FakeKodi:
             raise KodiConnectionError(f"{method}: offline")
         params = deepcopy(params or {})
         self.calls.append((method, params))
+        self._advance()
         handler = getattr(self, "_" + method.replace(".", "_"), None)
         if handler is None:
             raise KodiRpcError(method, -32601, "Method not found.")
@@ -120,39 +191,188 @@ class FakeKodi:
                 self._pending_start = None
                 self.player_active = True
         return (
-            [{"playerid": 1, "playertype": "internal", "type": "video"}]
+            [{"playerid": self._player_id, "playertype": "internal", "type": self.player_type}]
             if self.player_active
             else []
         )
 
+    @property
+    def _player_id(self) -> int:
+        return 0 if self.player_type == "audio" else 1
+
     def _Player_GetProperties(self, playerid: int, properties: list[str]) -> dict[str, Any]:
         self._require_player(playerid)
         in_queue = self.position >= 0
-        return {
-            "playlistid": VIDEO if in_queue else -1,
+        props: dict[str, Any] = {
+            "playlistid": (MUSIC if self.player_type == "audio" else VIDEO) if in_queue else -1,
             "position": self.position,
             "time": dict(self.time),
+            "speed": self.speed,
+            "totaltime": _time(0),
         }
+        if self._clip is not None:
+            played = time.monotonic() - self._clip[1]
+            props["time"] = _time(int(played))
+            props["totaltime"] = _time(max(1, round(self.clip_length)))
+        if self.player_type == "video":
+            props["audiostreams"] = [dict(s) for s in self.audio_streams]
+            props["currentaudiostream"] = self._stream(self.audio_streams, self.audio_index)
+            props["subtitles"] = [dict(s) for s in self.subtitles]
+            props["currentsubtitle"] = self._stream(self.subtitles, self.subtitle_index)
+            props["subtitleenabled"] = self.subtitle_enabled
+        return {name: props[name] for name in properties if name in props}
+
+    @staticmethod
+    def _stream(streams: list[dict[str, Any]], index: int) -> dict[str, Any]:
+        for stream in streams:
+            if stream["index"] == index:
+                return dict(stream)
+        return {}
 
     def _Player_GetItem(self, playerid: int, properties: list[str]) -> dict[str, Any]:
         self._require_player(playerid)
-        item = self.playlist[self.position] if self.position >= 0 else self.current_outside
+        playlist = self.music_playlist if self.player_type == "audio" else self.playlist
+        item = playlist[self.position] if self.position >= 0 else self.current_outside
         return {"item": dict(item or {})}
 
-    def _Player_Open(self, item: dict[str, Any], **_: Any) -> str:
+    def _Player_Open(self, item: dict[str, Any], options: dict[str, Any] | None = None) -> str:
+        """Like Kodi: a single item replaces its playlist (music or video) first."""
+        if item.get("playlistid") == MUSIC:
+            position = item.get("position", 0)
+            if not 0 <= position < len(self.music_playlist):
+                raise KodiRpcError("Player.Open", -32602, "Invalid params.")
+            self._stop(end=False)
+            self.player_type, self.position, self.player_active = "audio", position, True
+            self._emit("Player.OnPlay")
+            return "OK"
+        if "playlistid" not in item:
+            return self._open_single(item, (options or {}).get("resume"))
+        self._stop(end=False)
+        self._clip = None
+        self.player_type = "video"
         if item.get("playlistid") == VIDEO:
             position = item.get("position", 0)
             if not 0 <= position < len(self.playlist):
                 raise KodiRpcError("Player.Open", -32602, "Invalid params.")
             self.position = position
             self.time = {"hours": 0, "minutes": 0, "seconds": 0, "milliseconds": 0}
+            self._forget_streams()
             if self.start_delay:
                 self.player_active = False
                 self._pending_start = self.start_delay
             else:
                 self.player_active = True
+                self._emit("Player.OnPlay")
             return "OK"
         raise KodiRpcError("Player.Open", -32602, "Unsupported item")
+
+    def _open_single(self, item: dict[str, Any], resume: Any) -> str:
+        file = item.get("file")
+        if file and file.lower().endswith(AUDIO_EXTENSIONS):
+            self._stop(end=False)
+            self.music_playlist.clear()
+            self.clips.append(file)
+            if not self.clip_starts:
+                return "OK"
+            self._clip = (file, time.monotonic())
+            self.player_type, self.position, self.player_active = "audio", -1, True
+            self.current_outside = {"file": file, "label": "clip", "type": "song"}
+            self._emit("Player.OnPlay")
+            self._emit("Player.OnAVStart")
+            return "OK"
+        if "channelid" in item:
+            outside = {"type": "channel", "id": item["channelid"], "file": "pvr://channels/1"}
+        elif file:
+            outside = {"file": file, "label": file, "type": "unknown"}
+        else:
+            key, kind = next(
+                (key, kind)
+                for key, kind in (("movieid", "movie"), ("episodeid", "episode"))
+                if key in item
+            )
+            outside = {"type": kind, "id": item[key], "file": f"smb://nas/{kind}/{item[key]}.mkv"}
+            self.playlist.clear()  # a single video replaces the video playlist
+        if file:
+            self.playlist.clear()
+        self._stop(end=False)
+        seconds = _seconds(resume) if isinstance(resume, dict) else 0
+        if self.resume_dialog and seconds:
+            # The add-on asks first; Input.Select confirms "Resume from …"
+            minutes, secs = divmod(seconds, 60)
+            hours, minutes = divmod(minutes, 60)
+            self._dialog = {
+                "item": outside,
+                "seconds": seconds,
+                "label": f"Fortsetzen ab {hours}:{minutes:02}:{secs:02}",
+            }
+            return "OK"
+        self._start_outside(outside, seconds)
+        return "OK"
+
+    def _forget_streams(self) -> None:
+        if self.forget_streams:
+            self.audio_index, self.subtitle_index, self.subtitle_enabled = 0, 0, False
+
+    def _start_outside(self, outside: dict[str, Any], seconds: int) -> None:
+        self.start_video_outside_queue(outside, seconds)
+        self._forget_streams()
+        self.speed = 1
+        self._emit("Player.OnPlay")
+
+    def _Player_PlayPause(self, playerid: int, play: Any = "toggle") -> dict[str, Any]:
+        self._require_player(playerid)
+        self.speed = 0 if play is False or (play == "toggle" and self.speed) else 1
+        return {"speed": self.speed}
+
+    def _Player_SetAudioStream(self, playerid: int, stream: Any) -> str:
+        self._require_player(playerid)
+        self.audio_index = int(stream)
+        return "OK"
+
+    def _Player_SetSubtitle(self, playerid: int, subtitle: Any, enable: bool = False) -> str:
+        self._require_player(playerid)
+        if subtitle == "off":
+            self.subtitle_enabled = False
+        elif subtitle == "on":
+            self.subtitle_enabled = True
+        else:
+            self.subtitle_index = int(subtitle)
+            self.subtitle_enabled = enable
+        return "OK"
+
+    def _Application_GetProperties(self, properties: list[str]) -> dict[str, Any]:
+        values = {"volume": self.volume, "muted": self.muted}
+        return {name: values[name] for name in properties}
+
+    def _Application_SetVolume(self, volume: int) -> int:
+        self.volume = volume
+        return volume
+
+    def _XBMC_GetInfoBooleans(self, booleans: list[str]) -> dict[str, bool]:
+        answers = {}
+        for condition in booleans:
+            assert condition.startswith("System.IdleTime(")
+            seconds = int(condition.removeprefix("System.IdleTime(").rstrip(")"))
+            answers[condition] = time.monotonic() - self.idle_since >= seconds
+        return answers
+
+    def _GUI_GetProperties(self, properties: list[str]) -> dict[str, Any]:
+        if self._dialog is not None:
+            return {
+                "currentwindow": {"id": 13001, "label": ""},
+                "currentcontrol": {"label": self._dialog["label"]},
+            }
+        return {
+            "currentwindow": {"id": 10000, "label": self.window_label},
+            "currentcontrol": {"label": ""},
+        }
+
+    def _Input_Select(self) -> str:
+        self.press_key()  # like Kodi: counts as input
+        if self._dialog is not None:
+            dialog, self._dialog = self._dialog, None
+            self._start_outside(dialog["item"], dialog["seconds"])
+        return "OK"
 
     def _Player_GoTo(self, playerid: int, to: int) -> str:
         self._require_player(playerid)
@@ -170,22 +390,24 @@ class FakeKodi:
 
     def _Player_Stop(self, playerid: int) -> str:
         self._require_player(playerid)
-        self.player_active = False
-        self.position = -1
+        self._stop(end=False)
         return "OK"
 
+    def _list(self, playlistid: int) -> list[dict[str, Any]]:
+        return self.music_playlist if playlistid == MUSIC else self.playlist
+
     def _Playlist_GetProperties(self, playlistid: int, properties: list[str]) -> dict[str, Any]:
-        return {"size": len(self.playlist), "type": "video"}
+        return {"size": len(self._list(playlistid)), "type": "video"}
 
     def _Playlist_GetItems(
         self, playlistid: int, properties: list[str] | None = None
     ) -> dict[str, Any]:
-        items = [dict(item) for item in self.playlist]
+        items = [dict(item) for item in self._list(playlistid)]
         return {"items": items, "limits": {"start": 0, "end": len(items), "total": len(items)}}
 
     def _Playlist_Add(self, playlistid: int, item: Any) -> str:
         for entry in item if isinstance(item, list) else [item]:
-            self.playlist.append(self._to_playlist_item(entry))
+            self._list(playlistid).append(self._to_playlist_item(entry))
         return "OK"
 
     def _Playlist_Insert(self, playlistid: int, position: int, item: Any) -> str:
@@ -249,7 +471,7 @@ class FakeKodi:
     # Internals --------------------------------------------------------------------
 
     def _require_player(self, playerid: int) -> None:
-        if not self.player_active or playerid != 1:
+        if not self.player_active or playerid != self._player_id:
             raise KodiRpcError("Player", -32100, "Failed to execute method.")
 
     @staticmethod
@@ -274,3 +496,13 @@ class FakeKodi:
                     "file": f"smb://nas/{kind}/{entry[key]}.mkv",
                 }
         raise KodiRpcError("Playlist.Add", -32602, "Invalid params.")
+
+
+def _time(seconds: int) -> dict[str, int]:
+    minutes, secs = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    return {"hours": hours, "minutes": minutes, "seconds": secs, "milliseconds": 0}
+
+
+def _seconds(value: dict[str, int]) -> int:
+    return value.get("hours", 0) * 3600 + value.get("minutes", 0) * 60 + value.get("seconds", 0)

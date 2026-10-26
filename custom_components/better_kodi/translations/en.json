@@ -178,6 +178,18 @@
     },
     "reboot_not_allowed": {
       "message": "Kodi reports that it may not restart this device. Allow it on the Kodi device (for example with polkit/logind on Linux)."
+    },
+    "announce_not_playable": {
+      "message": "Better Kodi can only announce media sources (such as text-to-speech) and links, not {media_id}."
+    },
+    "announce_volume": {
+      "message": "The announcement volume must be between 0 and 100, not {volume}."
+    },
+    "announce_failed": {
+      "message": "The announcement could not be played: {error}"
+    },
+    "announce_restore_failed": {
+      "message": "After the announcement, Kodi could not continue what it played before: {error}"
     }
   },
   "services": {
@@ -319,6 +331,20 @@
               "share_enqueue": "What happens to a shared link on this Kodi. Off: this Kodi takes no shared links.",
               "share_devices": "Empty: links from all phones. Phones listed here for this Kodi go only to the Kodis that list them.",
               "share_notify_errors": "Sends a notification to the phone when a shared link can't be played."
+            }
+          },
+          "announce": {
+            "name": "Announcements",
+            "description": "Announcements (for example text-to-speech) interrupt what Kodi plays; afterwards Kodi continues at the same time, with the same audio track and subtitle. When Kodi is muted, nothing is interrupted.",
+            "data": {
+              "announce_volume": "Announcement volume",
+              "announce_max_duration": "Longest announcement",
+              "announce_start_timeout": "Wait for playback to continue"
+            },
+            "data_description": {
+              "announce_volume": "Kodi's volume (0–100) during announcements; afterwards it goes back. Empty: Kodi's current volume. An action can choose its own with announce_volume in extra.",
+              "announce_max_duration": "An announcement that still plays after this long is stopped.",
+              "announce_start_timeout": "How long Kodi may take to start the interrupted item again (streams and add-ons need a while). If it doesn't, the action reports an error."
             }
           },
           "features": {

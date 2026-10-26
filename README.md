@@ -8,6 +8,7 @@ Better Kodi does not replace the built-in Kodi integration. It sits on top of it
 - **The queue in the media browser**, updated live: see what's coming, jump to an item
 - **Queue services**: read the queue, remove and move items
 - **Handover**: continue the current video, with its whole queue and at the same position, on another Kodi
+- **Announcements** (`tts.speak`, `announce: true`): interrupt what Kodi plays, then continue at the same time, with the same audio track and subtitle
 - **Switch Kodi on and off** by itself: Wake on LAN, suspend, hibernate, shut down. No scripts or automations needed
 - **`call_method` with a response**: call any Kodi JSON-RPC method and use the result in your script
 
@@ -79,7 +80,7 @@ Under **Settings → Devices & services → Better Kodi → Configure**:
 <details>
 <summary>Screenshot of the options</summary>
 <br>
-<img src="https://raw.githubusercontent.com/financelurker/ha-better-kodi/main/docs/images/options.png?v=6459f6e0bf" alt="Better Kodi options: switching Kodi on and off, links shared from phones, extras" width="440">
+<img src="https://raw.githubusercontent.com/financelurker/ha-better-kodi/main/docs/images/options.png?v=286b31a0b8" alt="Better Kodi options: switching Kodi on and off, links shared from phones, extras" width="440">
 </details>
 
 | Option | Default | What it does |
@@ -91,6 +92,9 @@ Under **Settings → Devices & services → Better Kodi → Configure**:
 | Wake Kodi before sending | on | See below. |
 | Wait at most | 120 s | How long to wait for Kodi to wake up. |
 | Links shared from phones | Add to queue, all phones | See [Share from your phone](#share-from-your-phone). |
+| Announcement volume | empty | Kodi's volume (0–100) during announcements; afterwards it goes back. Empty: Kodi's current volume. See [Announcements](#announcements-text-to-speech). |
+| Longest announcement | 60 s | An announcement that still plays after this long is stopped. |
+| Wait for playback to continue | 30 s | How long Kodi may take to start the interrupted item again. If it doesn't, the action reports an error. |
 | Choices in the media browser | on | See [Play next or add to the queue from the media browser](#play-next-or-add-to-the-queue-from-the-media-browser). |
 | Link field and buttons | on | See [Paste a link](#paste-a-link-link-field-and-buttons). Off removes them. |
 | Library and restart buttons | on | See [Messages on the TV, library and restart](#messages-on-the-tv-library-and-restart). Off removes them. |
@@ -211,6 +215,53 @@ Better Kodi adds to the Kodi device, without any YAML or scripts:
 - **Update video library**, **Clean video library** (`VideoLibrary.Scan`, `VideoLibrary.Clean`) and **Restart device** (`System.Reboot`, only if Kodi may restart the device) as buttons, under the device's configuration entities.
 
 Switching the TV on and off with Kodi: Kodi does this itself over HDMI-CEC (Kodi: **Settings → System → Input → Peripherals → CEC adapter**, "Devices to power on/off" when Kodi wakes up and goes to sleep). Combined with Better Kodi's Wake on LAN and Suspend, no CEC add-on or script is needed.
+
+### Announcements (text-to-speech)
+
+Kodi can't play a sound on top of a video, and the Kodi integration ignores `announce`. Better Kodi handles announcements itself:
+
+```yaml
+action: tts.speak
+target:
+  entity_id: tts.home_assistant_cloud
+data:
+  media_player_entity_id: media_player.living_room_kodi
+  message: Dinner is ready
+```
+
+`tts.speak` always sends its clip as an announcement. Any other clip can be one too, with `media_player.play_media` and `announce: true` (a media source or a link to an audio file):
+
+```yaml
+action: media_player.play_media
+target:
+  entity_id: media_player.living_room_kodi
+data:
+  media_content_type: music
+  media_content_id: media-source://media_source/local/doorbell.mp3
+  announce: true
+  extra:
+    announce_volume: 40  # optional, 0–100; otherwise the option, or Kodi's volume
+```
+
+What happens:
+
+1. Better Kodi notes what Kodi plays: the queue entry (or the movie, file or TV channel outside the queue), the time, pause, audio track, subtitle and volume.
+2. Kodi plays the clip, at the announcement volume if one is set.
+3. Kodi continues where it was: the same item at the same time, paused if it was paused, with the same audio track and subtitle, and the volume goes back. Live TV switches back to the channel. The queue stays as it was; the clip isn't added to it. The action returns once Kodi plays again.
+
+- **Kodi is muted**: muted means muted. Nothing is interrupted and the clip isn't played (no error).
+- **Kodi is suspended**: with **Wake Kodi before sending** on, Better Kodi wakes Kodi, plays the clip and switches Kodi off again, unless something plays by then or someone used Kodi meanwhile.
+- **Several announcements at once** play one after the other; Kodi continues after the last one. Other commands for this Kodi from Home Assistant wait until then.
+- **Someone uses Kodi during the announcement** (remote, keyboard, CEC, stops the clip or starts something else): Better Kodi leaves Kodi alone and doesn't continue the interrupted item, and doesn't switch Kodi off. That's not an error.
+- **Kodi can't continue** (for example a stream that is gone): the action reports an error.
+
+Good to know:
+
+- The clip is played instead of the video; Kodi stops the video and shows its music screen for the clip. Afterwards the video starts again and buffers like when you start it yourself; YouTube and other add-on items are looked up again by the add-on. Streaming items take a few seconds.
+- If the video was close to its end, Kodi may count it as watched when the announcement stops it.
+- The volume is Kodi's own volume. If the TV or receiver is off, or its volume is down, the announcement is not heard; Better Kodi can't tell.
+- Without `announce: true`, a clip is played like any other media: **Play now** puts it behind the playing entry, and it stays in the queue.
+- Kodi has to reach Home Assistant to fetch the clip, as with the media browser (Home Assistant's internal URL).
 
 ### Share from your phone
 

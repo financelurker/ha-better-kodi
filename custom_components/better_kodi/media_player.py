@@ -6,13 +6,16 @@ import contextlib
 from datetime import datetime
 import logging
 import re
+import time
 from typing import Any
 from urllib.parse import quote, unquote
 
 from homeassistant.components import media_source
 from homeassistant.components.media_player import (
+    ATTR_MEDIA_ANNOUNCE,
     ATTR_MEDIA_CONTENT_ID,
     ATTR_MEDIA_CONTENT_TYPE,
+    ATTR_MEDIA_EXTRA,
     DATA_COMPONENT,
     DOMAIN as MEDIA_PLAYER_DOMAIN,
     SERVICE_BROWSE_MEDIA,
@@ -59,10 +62,14 @@ from homeassistant.helpers.event import (
 from homeassistant.helpers.translation import async_get_translations
 
 from . import BetterKodiConfigEntry, BetterKodiData, backends, get_option
+from .announce import AnnounceError, ClipError, Outcome
 from .assist import copy_aliases, transfer_exposure
 from .const import (
     ATTR_QUEUE_LENGTH,
     ATTR_QUEUE_POSITION,
+    CONF_ANNOUNCE_MAX_DURATION,
+    CONF_ANNOUNCE_START_TIMEOUT,
+    CONF_ANNOUNCE_VOLUME,
     CONF_ASSIST_MIGRATED,
     CONF_BROADCAST,
     CONF_BROWSE_CHOICES,
@@ -101,6 +108,7 @@ OWN_FEATURES = (
     | MediaPlayerEntityFeature.MEDIA_ENQUEUE
     | MediaPlayerEntityFeature.BROWSE_MEDIA
     | MediaPlayerEntityFeature.CLEAR_PLAYLIST
+    | MediaPlayerEntityFeature.MEDIA_ANNOUNCE
 )
 
 CHOICES_PREFIX = "better_kodi://choose/"
@@ -112,6 +120,7 @@ KODI_EVENT_TURN_ON = "kodi.turn_on"  # fired by the Kodi integration's turn_on
 LINK_IN_TEXT = re.compile(r"https?://\S+")
 TRAILING_PUNCTUATION = ".,;:!?)]}>'\"»“”"
 PLAYABLE_SCHEMES = frozenset({"http", "https", *KODI_PATH_SCHEMES})
+ANNOUNCE_VOLUME = "announce_volume"  # in "extra" of play_media: 0..100
 
 
 async def async_setup_entry(
@@ -142,6 +151,7 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
         self.device_entry = async_entity_id_to_device(hass, self._source_entity_id)
         self._queue_refresher: Debouncer[Any] | None = None
         self._choice_items: dict[str, BrowseMedia] = {}
+        self._woken_for_announcement: float | None = None  # when, if Better Kodi woke Kodi
 
     # --- Lifecycle ----------------------------------------------------------
 
@@ -339,6 +349,7 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
     # --- Forwarded commands ---------------------------------------------------
 
     async def _forward(self, service: str, **data: Any) -> None:
+        await self._data.announcer.wait_idle()  # commands wait for a running announcement
         await self.hass.services.async_call(
             MEDIA_PLAYER_DOMAIN,
             service,
@@ -445,6 +456,10 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
         **kwargs: Any,
     ) -> None:
         """Play or queue media, resolving page URLs (see docs/DESIGN.md)."""
+        if kwargs.get(ATTR_MEDIA_ANNOUNCE):
+            await self._async_announce(media_id, kwargs.get(ATTR_MEDIA_EXTRA) or {})
+            return
+        await self._data.announcer.wait_idle()
         mode = EnqueueMode(enqueue) if enqueue else EnqueueMode.PLAY
         media_id = extract_link(media_id)
         if media_id.startswith(ENQUEUE_PREFIX):
@@ -520,6 +535,97 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
             media_content_type=media_type,
             media_content_id=media_id,
         )
+
+    async def _async_announce(self, media_id: str, extra: dict[str, Any]) -> None:
+        """Interrupt Kodi for a clip and continue afterwards (see docs/DESIGN.md)."""
+        if media_source.is_media_source_id(media_id):
+            play_item = await media_source.async_resolve_media(self.hass, media_id, self.entity_id)
+            url = async_process_play_media_url(self.hass, play_item.url)
+        elif _is_playable_link(media_id):
+            url = media_id
+        else:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="announce_not_playable",
+                translation_placeholders={"media_id": media_id},
+            )
+        volume = extra.get(ANNOUNCE_VOLUME, get_option(self._entry, CONF_ANNOUNCE_VOLUME))
+        if volume is not None:
+            try:
+                volume = round(float(volume))
+            except (TypeError, ValueError) as err:
+                raise ServiceValidationError(
+                    translation_domain=DOMAIN,
+                    translation_key="announce_volume",
+                    translation_placeholders={"volume": str(volume)},
+                ) from err
+            if not 0 <= volume <= 100:
+                raise ServiceValidationError(
+                    translation_domain=DOMAIN,
+                    translation_key="announce_volume",
+                    translation_placeholders={"volume": str(volume)},
+                )
+
+        source = self.hass.states.get(self._source_entity_id)
+        was_off = source is not None and source.state == STATE_OFF
+        await self._async_wake_kodi()
+        if was_off and get_option(self._entry, CONF_WAKE) and self._woken_for_announcement is None:
+            self._woken_for_announcement = time.monotonic()
+        try:
+            outcome = await self._data.announcer.announce(
+                url,
+                volume=volume,
+                max_duration=get_option(self._entry, CONF_ANNOUNCE_MAX_DURATION),
+                start_timeout=get_option(self._entry, CONF_ANNOUNCE_START_TIMEOUT),
+            )
+        except ClipError as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="announce_failed",
+                translation_placeholders={"error": str(err)},
+            ) from err
+        except AnnounceError as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="announce_restore_failed",
+                translation_placeholders={"error": str(err)},
+            ) from err
+        except KodiError as err:
+            raise self._kodi_error(err) from err
+        else:
+            if outcome is Outcome.OVERRIDE:
+                self._woken_for_announcement = None  # in use: don't switch off
+        finally:
+            self._schedule_queue_refresh()
+            await self._async_power_off_after_announcement()
+
+    async def _async_power_off_after_announcement(self) -> None:
+        """Switch Kodi off again if it was woken for announcements and nobody uses it."""
+        woken_at = self._woken_for_announcement
+        if woken_at is None or self._data.announcer.busy:
+            return  # not woken for this, or the next announcement switches off
+        self._woken_for_announcement = None
+        try:
+            players = await self._data.client.call("Player.GetActivePlayers") or []
+            seconds = int(time.monotonic() - woken_at) - 1
+            idle_since_wake = True
+            if seconds >= 1:
+                condition = f"System.IdleTime({seconds})"
+                result = await self._data.client.call(
+                    "XBMC.GetInfoBooleans", {"booleans": [condition]}
+                )
+                idle_since_wake = (result or {}).get(condition) is not False
+        except KodiError as err:
+            _LOGGER.debug("Not switching Kodi off after the announcement: %s", err)
+            return
+        if players or not idle_since_wake:
+            _LOGGER.debug("Kodi is in use; not switching it off after the announcement")
+            return
+        _LOGGER.debug("Switching Kodi off again after the announcement")
+        try:
+            await self.async_turn_off()
+        except HomeAssistantError as err:
+            _LOGGER.warning("Could not switch Kodi off after the announcement: %s", err)
 
     async def _async_media_source_item(self, url: str) -> dict[str, Any]:
         """Return the best Kodi item for a resolved media source URL (see backends)."""
@@ -659,20 +765,24 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
                 translation_key="queue_error",
                 translation_placeholders={"error": str(err)},
             ) from err
-        except KodiRpcError as err:
-            raise HomeAssistantError(
+        except KodiError as err:
+            raise self._kodi_error(err) from err
+        self._schedule_queue_refresh()
+        return result
+
+    def _kodi_error(self, err: KodiError) -> HomeAssistantError:
+        """Return the Home Assistant error for a Kodi error."""
+        if isinstance(err, KodiRpcError):
+            return HomeAssistantError(
                 translation_domain=DOMAIN,
                 translation_key="kodi_error",
                 translation_placeholders={"error": err.message},
-            ) from err
-        except KodiError as err:
-            raise HomeAssistantError(
-                translation_domain=DOMAIN,
-                translation_key="cannot_connect",
-                translation_placeholders={"host": self._data.client.base_url},
-            ) from err
-        self._schedule_queue_refresh()
-        return result
+            )
+        return HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="cannot_connect",
+            translation_placeholders={"host": self._data.client.base_url},
+        )
 
     # --- Services -------------------------------------------------------------
 

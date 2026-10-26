@@ -178,6 +178,18 @@
     },
     "reboot_not_allowed": {
       "message": "Kodi meldet, dass es dieses Gerät nicht neu starten darf. Erlaube es auf dem Kodi-Gerät (unter Linux zum Beispiel über polkit/logind)."
+    },
+    "announce_not_playable": {
+      "message": "Better Kodi kann nur Medienquellen (etwa Sprachausgabe) und Links als Durchsage abspielen, nicht {media_id}."
+    },
+    "announce_volume": {
+      "message": "Die Lautstärke der Durchsage muss zwischen 0 und 100 liegen, nicht {volume}."
+    },
+    "announce_failed": {
+      "message": "Die Durchsage konnte nicht abgespielt werden: {error}"
+    },
+    "announce_restore_failed": {
+      "message": "Nach der Durchsage konnte Kodi nicht fortsetzen, was vorher lief: {error}"
     }
   },
   "services": {
@@ -319,6 +331,20 @@
               "share_enqueue": "Was mit einem geteilten Link auf diesem Kodi passiert. Aus: dieses Kodi nimmt keine geteilten Links an.",
               "share_devices": "Leer: Links von allen Handys. Hier eingetragene Handys senden nur an die Kodis, bei denen sie eingetragen sind.",
               "share_notify_errors": "Schickt eine Benachrichtigung ans Handy, wenn ein geteilter Link nicht abgespielt werden kann."
+            }
+          },
+          "announce": {
+            "name": "Durchsagen",
+            "description": "Durchsagen (etwa Sprachausgabe) unterbrechen, was Kodi abspielt; danach setzt Kodi an derselben Stelle fort, mit derselben Audiospur und denselben Untertiteln. Ist Kodi stummgeschaltet, wird nichts unterbrochen.",
+            "data": {
+              "announce_volume": "Lautstärke der Durchsagen",
+              "announce_max_duration": "Längste Durchsage",
+              "announce_start_timeout": "Warten aufs Fortsetzen"
+            },
+            "data_description": {
+              "announce_volume": "Kodis Lautstärke (0–100) während Durchsagen; danach wird sie zurückgestellt. Leer: Kodis aktuelle Lautstärke. Eine Aktion kann mit announce_volume in extra eine eigene wählen.",
+              "announce_max_duration": "Eine Durchsage, die nach dieser Zeit noch läuft, wird beendet.",
+              "announce_start_timeout": "Wie lange Kodi brauchen darf, um das Unterbrochene wieder zu starten (Streams und Addons brauchen eine Weile). Klappt es nicht, meldet die Aktion einen Fehler."
             }
           },
           "features": {

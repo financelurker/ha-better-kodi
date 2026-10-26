@@ -169,11 +169,38 @@ The service field is called `destination`, not `target`, so it does not get mixe
 
 If the source plays something that is not from the queue, only that item is handed over.
 
+## Announcements
+
+`media_player.play_media` with `announce: true` (which `tts.speak` always sets) is an announcement; the entity reports `MEDIA_ANNOUNCE`. Without `announce`, a clip is ordinary media, also a text-to-speech one: Better Kodi does not guess from the source.
+
+Kodi can't mix a clip into a video, and no add-on is assumed. So `announce.py` interrupts, plays the clip and continues:
+
+1. **Muted**: muted means muted. Nothing happens (no error); the reason for the mute is unknown.
+2. **Note** volume, the active player (video before audio) with playlist and position or the item (library ID, file, add-on path, channel), time, pause (speed 0), audio track and subtitle (index, language, name, on/off), and the music and video playlists. An item that can't be opened again (no file, no ID) is not interrupted; the action fails.
+3. **Clip**: `Player.Open` with the clip as a single file, at the announcement volume (option, or `announce_volume` in `extra`). Kodi's own resume dialog never shows for JSON-RPC.
+4. **End**: Kodi's `Player.OnStop` after the clip's `Player.OnPlay` (WebSocket) tells whether the clip played to the end (`end`); without WebSocket, polling, and a stop well before the clip's end means someone stopped it. A clip still playing after the longest announcement time is stopped.
+5. **Continue**: the volume goes back unless someone changed it. A queue entry is opened by playlist and position, an item outside the playlist with `Player.Open` and the `resume` time, a channel by `channelid`. Then: seek if Kodi isn't within 3 s of the time (Kodi ignores `resume` for playlist positions), choose the audio track and subtitle again (language and name, index as fallback; Kodi remembers them per file, this covers changing stream URLs), pause.
+6. The action returns after that, or with an error if Kodi did not play again within the wait time (option, 30 s).
+
+Details found in Kodi's source:
+
+- `Player.Open` with a single item empties the playlist of its type first (music for the clip, video for a movie outside the queue). Better Kodi fills emptied playlists again from the noted entries.
+- Kodi's idle time (`System.IdleTime(n)`, `XBMC.GetInfoBooleans`) is only reset by input (remote, keyboard, CEC, joystick, `Input.*` calls), not by `Player.*` calls. Better Kodi uses it to tell whether someone used Kodi.
+- Add-ons may ask "Resume from …" (Jellyfin for Kodi when transcoding). Better Kodi confirms the focused entry with `Input.Select` only if it shows the noted time (±3 s), whatever the language; otherwise it leaves dialogs alone.
+
+**Human override**: if, during the clip or while Kodi starts again, someone uses Kodi, stops the clip or starts something else, Better Kodi does not continue and does not switch Kodi off. The action succeeds (logged at info level).
+
+Announcements are serialized per Kodi. One that arrives during another plays next; the noted state is kept and Kodi continues once after the last. Other commands from Home Assistant (play_media, forwarded controls) wait until the announcements are done.
+
+**Suspended Kodi**: with "Wake Kodi before sending", Better Kodi wakes Kodi, checks the mute, plays and switches Kodi off again with the configured command, but only if nothing plays and Kodi's idle time covers the time since waking.
+
+Accepted limits: stopping close to the end may mark the video as watched; the clip can't be heard if the TV or receiver is off (not detectable); a Home Assistant restart during an announcement leaves the video stopped; repeat, shuffle, party mode and items that can't be opened again (DRM, disc menus) are best effort.
+
 ## Services
 
 | Service | Purpose |
 | --- | --- |
-| `media_player.play_media` | With `enqueue` and URL resolving as above |
+| `media_player.play_media` | With `enqueue` and URL resolving as above; with `announce` an announcement |
 | `media_player.clear_playlist` | Clears the video queue |
 | `better_kodi.get_queue` | Returns the queue with positions, titles and the current item |
 | `better_kodi.remove_from_queue` | Removes an item by position |
