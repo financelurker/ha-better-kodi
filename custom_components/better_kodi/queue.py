@@ -31,6 +31,9 @@ TITLE_LOOKUP_TIMEOUT = 8.0
 LOOKUP_RETRY_AFTER = 600.0
 MAX_PARALLEL_LOOKUPS = 4
 MAX_LOOKUPS_PER_READ = 25
+# Played entries removed per run; a longer trim continues in another run, so
+# announcements (which wait for running commands) get in between.
+TRIM_BATCH = 20
 
 type TitleLookup = Callable[[str], Awaitable[tuple[str | None, str | None] | None]]
 
@@ -335,26 +338,29 @@ class KodiQueue:
                 "Playlist.Remove", {"playlistid": VIDEO_PLAYLIST, "position": position}
             )
 
-    async def trim_played(self, keep: int) -> int:
+    async def trim_played(self, keep: int, limit: int = TRIM_BATCH) -> int:
         """Remove played entries in front of the playing one, keeping the last `keep`.
 
         Played means: in front of the playing entry. Nothing is removed while
-        Kodi shuffles (the order says nothing about what played) or repeats the
-        whole queue (the entries come again). Returns how many were removed.
+        Kodi shuffles (the order says nothing about what played), repeats the
+        whole queue (the entries come again) or is in party mode (it removes
+        played entries itself). At most `limit` entries are removed; returns
+        how many were removed.
         """
         async with self._lock:
             status = await self.status()
             if status.player_id is None or not status.in_queue:
                 return 0
             assert status.position is not None
-            excess = status.position - keep
+            excess = min(status.position - keep, limit)
             if excess <= 0:
                 return 0
             props = await self.client.call(
                 "Player.GetProperties",
-                {"playerid": status.player_id, "properties": ["shuffled", "repeat"]},
+                {"playerid": status.player_id, "properties": ["shuffled", "repeat", "partymode"]},
             )
-            if props.get("shuffled") or props.get("repeat") == "all":
+            props = props or {}
+            if props.get("shuffled") or props.get("repeat") == "all" or props.get("partymode"):
                 return 0
             # Kodi moves its position back by one per removal. It refuses to
             # remove the playing entry, so a jump back meanwhile stops here.
@@ -385,6 +391,11 @@ class KodiQueue:
 
     async def snapshot(self) -> HandoverSnapshot:
         """Capture what is playing, for a handover."""
+        # Under the lock: position and items must match (a trim may remove entries).
+        async with self._lock:
+            return await self._snapshot()
+
+    async def _snapshot(self) -> HandoverSnapshot:
         status = await self.status()
         if status.player_id is None:
             raise QueueError("Nothing is playing on this Kodi")

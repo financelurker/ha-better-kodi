@@ -394,9 +394,10 @@ async def test_trim_played(
 
 
 @pytest.mark.parametrize(
-    ("attribute", "value"), [("video_shuffled", True), ("video_repeat", "all")]
+    ("attribute", "value"),
+    [("video_shuffled", True), ("video_repeat", "all"), ("partymode", True)],
 )
-async def test_trim_played_not_while_shuffled_or_repeating_all(
+async def test_trim_played_not_while_shuffled_repeating_all_or_party(
     kodi: FakeKodi, queue: KodiQueue, attribute: str, value: object
 ) -> None:
     await start_queue(queue, A, B, C, D, position=3)
@@ -420,8 +421,40 @@ async def test_trim_played_not_outside_queue_or_idle(kodi: FakeKodi, queue: Kodi
     assert len(kodi.playlist) == 3
 
 
-async def test_trim_played_waits_for_queue_changes(kodi: FakeKodi, queue: KodiQueue) -> None:
-    await start_queue(queue, A, B, C, position=2)
-    await asyncio.gather(queue.trim_played(0), queue.enqueue(NEW, EnqueueMode.ADD))
-    assert kodi.files() == [C["file"], NEW["file"]]
+async def test_trim_played_not_while_the_queue_starts(kodi: FakeKodi, queue: KodiQueue) -> None:
+    kodi.start_delay = 5  # Kodi answers Player.Open, the player comes later
+    await start_queue(queue, A, B, C)
+    await queue.client.call("Playlist.Add", {"playlistid": 1, "item": NEW})
+    queue._started = (queue_module.time.monotonic(), 3)  # started at the last entry
+    assert (await queue.status()).starting
+    assert await queue.trim_played(0) == 0
+    assert len(kodi.playlist) == 4
+
+
+async def test_trim_played_removes_at_most_a_batch(kodi: FakeKodi, queue: KodiQueue) -> None:
+    items = [{"file": f"plugin://x/{index}"} for index in range(30)]
+    await start_queue(queue, *items, position=29)
+    assert await queue.trim_played(0, limit=20) == 20
+    assert kodi.position == 9
+    assert await queue.trim_played(0, limit=20) == 9
     assert kodi.position == 0
+
+
+@pytest.mark.parametrize(
+    "operation",
+    [lambda queue: queue.trim_played(0), lambda queue: queue.snapshot()],
+    ids=["trim", "snapshot"],
+)
+async def test_trim_and_snapshot_wait_for_queue_changes(
+    kodi: FakeKodi, queue: KodiQueue, operation
+) -> None:
+    """Both run under the queue lock: no other queue change in between."""
+    await start_queue(queue, A, B, C, position=2)
+    calls = len(kodi.calls)
+    async with queue._lock:  # another queue change runs
+        task = asyncio.ensure_future(operation(queue))
+        for _ in range(5):
+            await asyncio.sleep(0)
+        assert len(kodi.calls) == calls
+    await task
+    assert len(kodi.calls) > calls

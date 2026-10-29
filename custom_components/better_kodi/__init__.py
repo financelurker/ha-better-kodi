@@ -43,7 +43,7 @@ from .const import (
     OPTIONAL_KEYS,
 )
 from .kodi_client import KodiAuthError, KodiClient, KodiError
-from .queue import KodiQueue
+from .queue import TRIM_BATCH, KodiQueue
 from .resolvers import async_youtube_title
 from .services import async_setup_services
 from .share import async_setup_share
@@ -159,6 +159,13 @@ class BetterKodiData:
             return
         if removed:
             _LOGGER.debug("Removed %s played entries from the queue", removed)
+        if removed >= TRIM_BATCH:
+            self._trim_again = True  # more to remove, after announcements waiting meanwhile
+
+    async def async_wait_trim(self) -> None:
+        """Wait until no trim runs (for tests)."""
+        while self._trim_task is not None and not self._trim_task.done():
+            await asyncio.shield(self._trim_task)
 
     def notify_queue_changed(self) -> None:
         """Tell listeners (the entity) that the queue may have changed."""
