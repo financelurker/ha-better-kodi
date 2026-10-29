@@ -57,6 +57,23 @@ If Kodi is playing something that was not started from the queue (for example a 
 
 Library items from the media browser (`movie`, `episode`, `musicvideo`) can be queued by their Kodi ID. Other library items (shows, seasons, channels, directories) are forwarded to the Kodi entity and only support playing now.
 
+### Removing played entries
+
+Kodi keeps played entries in the queue. The select entity *Played entries to keep* (`<entry id>_keep_played`, configuration entity) removes them. Choices: `off` (default, everything stays), `0` (remove all played entries), `1`, `2`, `3`, `5`, `10`: Better Kodi keeps that many entries in front of the playing one and removes the older ones. The choice is restored after a restart; an unknown restored state counts as `off`.
+
+Why a select entity: one entity, automations can change it, nothing is reloaded, and "off" is a choice of its own. A number entity would have needed a special value for off (0 would then not mean "keep none"), or a second entity as switch.
+
+- **Played** means: in front of the playing entry. Skipped entries count as played.
+- **Scope:** Kodi's whole video playlist, also one started from Kodi's own menus or another app (Yatse, Kore).
+- **When:** when an entry starts (Kodi's `Player.OnPlay` / `Player.OnAVStart`), and right after the choice is set. Without Kodi's WebSocket: when the Kodi entity plays another item (not on pause or other state changes). Calls while a trim runs are combined into one more run.
+- **How:** `Playlist.Remove` at position 0, once per entry to remove. Kodi moves its position back by one per removal and refuses to remove the playing entry, so a jump back meanwhile stops the trim.
+- **Positions shift:** after a trim, every entry's position is smaller by the number of removed entries. A queue read before (an open media browser, an automation that read `get_queue` and then removes or moves by position) can point at the wrong entry; read the queue again after the next entry started.
+- Under the queue lock, and like a command: after announcements, which wait for it. At most 20 entries per run; a longer trim continues in another run, so an announcement (a doorbell, say) waits for at most one run. The choice is read per run, so a change takes effect with the next run at the latest.
+- The handover reads position and entries under the queue lock too, so a trim can't remove entries in between.
+- **Not** while Kodi shuffles (the order says nothing about what played), repeats the whole queue (the entries come again), is in party mode (it removes played entries itself), plays something outside the queue, plays nothing (also not during the start window after `Player.Open`), or while an item reopened after an announcement waits to be removed (the entries in front of it are the noted queue, not played ones; checked again once it is the trim's turn).
+- At the end of the queue nothing is removed: the next `play_media` clears the queue anyway.
+- Errors are logged at debug level; the trim is tried again with the next entry. On unload or reload a running trim is cancelled.
+
 ## URL resolvers
 
 A resolver turns a page URL into something Kodi can play. They are tried in order; the first match wins.

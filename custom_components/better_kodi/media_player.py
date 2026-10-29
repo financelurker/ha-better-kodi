@@ -189,6 +189,14 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
         new = self._source_state
         if _playing_item_changed(old, new):
             self._schedule_queue_refresh()
+            if (
+                not self._data.client.notifications_connected
+                and new is not None
+                and new.state == MediaPlayerState.PLAYING
+                and _item_changed(old, new)
+            ):
+                # Without Kodi's notifications, the next item shows up here.
+                self._data.schedule_trim()
         self.async_write_ha_state()
 
     @callback
@@ -1125,6 +1133,14 @@ def _can_enqueue(item: BrowseMedia) -> bool:
 def _is_playable_link(media_id: str) -> bool:
     scheme, separator, _ = media_id.partition("://")
     return bool(separator) and scheme.lower() in PLAYABLE_SCHEMES
+
+
+def _item_changed(old: State | None, new: State | None) -> bool:
+    """Return True if the Kodi entity shows another item."""
+    return any(
+        (old.attributes.get(key) if old else None) != (new.attributes.get(key) if new else None)
+        for key in ("media_content_id", "media_title")
+    )
 
 
 def _playing_item_changed(old: State | None, new: State | None) -> bool:

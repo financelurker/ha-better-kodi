@@ -238,6 +238,14 @@ class Announcer:
         """Return True while an announcement runs, waits or Kodi continues after one."""
         return not self._idle.is_set()
 
+    @property
+    def watching_reopened_item(self) -> bool:
+        """Return True while an item reopened after an announcement waits to be removed.
+
+        The entries in front of it are the noted queue, not played entries.
+        """
+        return bool(self._tail_tasks)
+
     async def wait_idle(self) -> None:
         """Wait until no announcement runs or waits."""
         await self._idle.wait()

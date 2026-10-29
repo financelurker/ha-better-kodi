@@ -82,6 +82,20 @@
         "name": "Link"
       }
     },
+    "select": {
+      "keep_played": {
+        "name": "Played entries to keep",
+        "state": {
+          "off": "Off",
+          "0": "Remove all",
+          "1": "1 entry",
+          "2": "2 entries",
+          "3": "3 entries",
+          "5": "5 entries",
+          "10": "10 entries"
+        }
+      }
+    },
     "button": {
       "play_now": {
         "name": "Play link now"

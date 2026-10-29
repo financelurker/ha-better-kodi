@@ -41,6 +41,11 @@
       "library_clean": {
         "default": "mdi:broom"
       }
+    },
+    "select": {
+      "keep_played": {
+        "default": "mdi:playlist-check"
+      }
     }
   }
 }

@@ -285,6 +285,8 @@ Entries get their titles even when another app (Cast Kodi, Yatse) queued them: K
 
 The entity also has the attributes `queue_position` and `queue_length`.
 
+Kodi keeps played entries in the queue. To remove them, set **Played entries to keep** (a select entity under the device's configuration entities) to how many played entries should stay in front of the playing one, for example **3 entries** to still go back a few videos, or **Remove all**. Older ones are removed when the next entry starts. **Off** (default) keeps everything. Nothing is removed while Kodi shuffles, repeats the whole queue or is in party mode. Entries you skipped count as played. This applies to Kodi's whole video playlist, also when it was started from Kodi itself or another app. After a trim, the positions of all entries are smaller: an automation that reads the queue with `get_queue` and then removes or moves an entry by position should read it again after the next entry started.
+
 ### Media from Home Assistant's media browser: media-source backends
 
 Integrations such as Jellyfin hand players a plain stream link. Kodi (and so Cast Kodi) names it "stream", and playback isn't reported back to the media server. A **media-source backend** teaches Better Kodi about the items of one such integration. So far there is one, for Jellyfin; for other integrations the stream link is queued as is.

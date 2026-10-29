@@ -1,5 +1,6 @@
 """A small in-memory Kodi that answers the JSON-RPC calls Better Kodi uses."""
 
+import asyncio
 from collections.abc import Callable
 from copy import deepcopy
 import time
@@ -66,6 +67,10 @@ class FakeKodi:
         # the order the entries were added in.
         self.music_shuffled = False
         self.video_repeat = "off"  # repeat of the video playlist
+        self.video_shuffled = False
+        self.partymode = False
+        # Like a real connection: other tasks run while a call is under way
+        self.yield_calls = False
         self._music_added: list[dict[str, Any]] = []
         # Called after Kodi opened a single item (an add-on filling the playlist, say)
         self.after_open_single: Callable[[], None] | None = None
@@ -172,6 +177,8 @@ class FakeKodi:
 
     async def call(self, method: str, params: dict[str, Any] | None = None) -> Any:
         """Answer one JSON-RPC call."""
+        if self.yield_calls:
+            await asyncio.sleep(0)
         if self.offline:
             raise KodiConnectionError(f"{method}: offline")
         params = deepcopy(params or {})
@@ -263,8 +270,9 @@ class FakeKodi:
             "time": dict(self.time),
             "speed": self.speed,
             "repeat": self.music_repeat if self.player_type == "audio" else self.video_repeat,
-            "shuffled": self.music_shuffled if self.player_type == "audio" else False,
+            "shuffled": self.music_shuffled if self.player_type == "audio" else self.video_shuffled,
             "totaltime": _time(0),
+            "partymode": self.partymode,
         }
         if self._clip is not None:
             played = time.monotonic() - self._clip[1]
