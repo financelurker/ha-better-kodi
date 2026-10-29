@@ -82,10 +82,18 @@
         "name": "Link"
       }
     },
-    "number": {
+    "select": {
       "keep_played": {
         "name": "Played entries to keep",
-        "unit_of_measurement": "entries"
+        "state": {
+          "off": "Off",
+          "0": "Remove all",
+          "1": "1 entry",
+          "2": "2 entries",
+          "3": "3 entries",
+          "5": "5 entries",
+          "10": "10 entries"
+        }
       }
     },
     "button": {

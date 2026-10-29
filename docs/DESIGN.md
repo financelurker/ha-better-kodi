@@ -59,7 +59,9 @@ Library items from the media browser (`movie`, `episode`, `musicvideo`) can be q
 
 ### Removing played entries
 
-Kodi keeps played entries in the queue. The number entity *Played entries to keep* (`<entry id>_keep_played`, configuration entity, 0–50, default 0) removes them: with a value N > 0, Better Kodi keeps the last N entries in front of the playing one and removes the older ones. 0 means off, everything stays. A number entity instead of an option, so automations can change it and nothing is reloaded. The value is restored after a restart.
+Kodi keeps played entries in the queue. The select entity *Played entries to keep* (`<entry id>_keep_played`, configuration entity) removes them. Choices: `off` (default, everything stays), `0` (remove all played entries), `1`, `2`, `3`, `5`, `10`: Better Kodi keeps that many entries in front of the playing one and removes the older ones. The choice is restored after a restart; an unknown restored state counts as `off`.
+
+Why a select entity: one entity, automations can change it, nothing is reloaded, and "off" is a choice of its own. A number entity would have needed a special value for off (0 would then not mean "keep none"), or a second entity as switch.
 
 - **Played** means: in front of the playing entry. Skipped entries count as played.
 - **When:** when an entry starts (Kodi's `Player.OnPlay` / `Player.OnAVStart`; without Kodi's WebSocket, when the Kodi entity shows another item), and right after the value is set. Calls while a trim runs are combined into one more run.

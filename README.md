@@ -285,7 +285,7 @@ Entries get their titles even when another app (Cast Kodi, Yatse) queued them: K
 
 The entity also has the attributes `queue_position` and `queue_length`.
 
-Kodi keeps played entries in the queue. To remove them, set **Played entries to keep** (a number entity under the device's configuration entities) to how many played entries should stay in front of the playing one, for example 3 to still go back a few videos. Older ones are removed when the next entry starts. 0 (default) keeps everything. Nothing is removed while Kodi shuffles or repeats the whole queue. Entries you skipped count as played.
+Kodi keeps played entries in the queue. To remove them, set **Played entries to keep** (a select entity under the device's configuration entities) to how many played entries should stay in front of the playing one, for example **3 entries** to still go back a few videos, or **Remove all**. Older ones are removed when the next entry starts. **Off** (default) keeps everything. Nothing is removed while Kodi shuffles or repeats the whole queue. Entries you skipped count as played.
 
 ### Media from Home Assistant's media browser: media-source backends
 

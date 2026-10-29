@@ -82,10 +82,18 @@
         "name": "Link"
       }
     },
-    "number": {
+    "select": {
       "keep_played": {
         "name": "Gespielte Einträge behalten",
-        "unit_of_measurement": "Einträge"
+        "state": {
+          "off": "Aus",
+          "0": "Alle entfernen",
+          "1": "1 Eintrag",
+          "2": "2 Einträge",
+          "3": "3 Einträge",
+          "5": "5 Einträge",
+          "10": "10 Einträge"
+        }
       }
     },
     "button": {

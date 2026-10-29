@@ -1,19 +1,20 @@
-"""Tests for the number entity that removes played entries from the queue."""
+"""Tests for the select entity that removes played entries from the queue."""
 
 import asyncio
 from collections.abc import Callable
 from typing import Any
 from unittest.mock import PropertyMock, patch
 
-from pytest_homeassistant_custom_component.common import mock_restore_cache_with_extra_data
+from pytest_homeassistant_custom_component.common import mock_restore_cache
 
 from custom_components.better_kodi.announce import Announcer
-from custom_components.better_kodi.const import DOMAIN, KEEP_PLAYED_KEY, MAX_KEEP_PLAYED
+from custom_components.better_kodi.const import DOMAIN, KEEP_PLAYED_KEY, KEEP_PLAYED_OPTIONS
 from custom_components.better_kodi.kodi_client import KodiClient
-from homeassistant.components.number import (
-    ATTR_VALUE,
-    DOMAIN as NUMBER_DOMAIN,
-    SERVICE_SET_VALUE,
+from homeassistant.components.select import (
+    ATTR_OPTION,
+    ATTR_OPTIONS,
+    DOMAIN as SELECT_DOMAIN,
+    SERVICE_SELECT_OPTION,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_ENTITY_ID, EntityCategory
@@ -26,19 +27,19 @@ from .fake_kodi import FakeKodi
 FILES = [f"plugin://x/{name}" for name in "abcdef"]
 
 
-def number_id(hass: HomeAssistant, entry: ConfigEntry) -> str:
+def select_id(hass: HomeAssistant, entry: ConfigEntry) -> str:
     entity_id = er.async_get(hass).async_get_entity_id(
-        NUMBER_DOMAIN, DOMAIN, f"{entry.entry_id}_{KEEP_PLAYED_KEY}"
+        SELECT_DOMAIN, DOMAIN, f"{entry.entry_id}_{KEEP_PLAYED_KEY}"
     )
     assert entity_id is not None
     return entity_id
 
 
-async def set_keep(hass: HomeAssistant, entity_id: str, value: float) -> None:
+async def set_keep(hass: HomeAssistant, entity_id: str, option: str) -> None:
     await hass.services.async_call(
-        NUMBER_DOMAIN,
-        SERVICE_SET_VALUE,
-        {ATTR_ENTITY_ID: entity_id, ATTR_VALUE: value},
+        SELECT_DOMAIN,
+        SERVICE_SELECT_OPTION,
+        {ATTR_ENTITY_ID: entity_id, ATTR_OPTION: option},
         blocking=True,
     )
     await hass.async_block_till_done()
@@ -61,12 +62,11 @@ async def test_entity_defaults_to_off(
     kodi = fakes[kodi_source.host]
     play_queue(kodi, 4)
     entry = await setup_better_kodi(hass, kodi_source)
-    entity_id = number_id(hass, entry)
+    entity_id = select_id(hass, entry)
     state = hass.states.get(entity_id)
     assert state is not None
-    assert state.state == "0"
-    assert state.attributes["min"] == 0
-    assert state.attributes["max"] == MAX_KEEP_PLAYED
+    assert state.state == "off"
+    assert state.attributes[ATTR_OPTIONS] == list(KEEP_PLAYED_OPTIONS)
     assert er.async_get(hass).async_get(entity_id).entity_category is EntityCategory.CONFIG
     assert len(kodi.playlist) == 6
     assert "Playlist.Remove" not in kodi.method_calls()
@@ -78,9 +78,9 @@ async def test_setting_a_value_tidies_up_at_once(
     kodi = fakes[kodi_source.host]
     play_queue(kodi, 4)
     entry = await setup_better_kodi(hass, kodi_source)
-    entity_id = number_id(hass, entry)
+    entity_id = select_id(hass, entry)
 
-    await set_keep(hass, entity_id, 2)
+    await set_keep(hass, entity_id, "2")
     assert hass.states.get(entity_id).state == "2"
     assert names(kodi) == ["c", "d", "e", "f"]
     assert kodi.position == 2
@@ -98,7 +98,7 @@ async def test_next_item_from_kodi_notification(
 
     with patch.object(KodiClient, "run_notifications", run_notifications):
         entry = await setup_better_kodi(hass, kodi_source)
-        await set_keep(hass, number_id(hass, entry), 1)
+        await set_keep(hass, select_id(hass, entry), "1")
         assert len(kodi.playlist) == 6  # one played entry: nothing to remove yet
 
         for expected in (["b", "c", "d", "e", "f"], ["c", "d", "e", "f"]):
@@ -116,7 +116,7 @@ async def test_next_item_without_notifications(
     kodi = fakes[kodi_source.host]
     play_queue(kodi, 0)
     entry = await setup_better_kodi(hass, kodi_source)
-    await set_keep(hass, number_id(hass, entry), 1)
+    await set_keep(hass, select_id(hass, entry), "1")
 
     kodi.position = 3  # Kodi went on by itself
     state = hass.states.get(kodi_source.entity_id)
@@ -137,27 +137,13 @@ async def test_value_survives_a_restart(
     entry.add_to_hass(hass)
     # The number entity's ID is known before setup from its registry entry.
     registry_entry = er.async_get(hass).async_get_or_create(
-        NUMBER_DOMAIN,
+        SELECT_DOMAIN,
         DOMAIN,
         f"{entry.entry_id}_{KEEP_PLAYED_KEY}",
         config_entry=entry,
         suggested_object_id="wohnzimmer_kodi_keep_played",
     )
-    mock_restore_cache_with_extra_data(
-        hass,
-        [
-            (
-                State(registry_entry.entity_id, "3"),
-                {
-                    "native_max_value": MAX_KEEP_PLAYED,
-                    "native_min_value": 0,
-                    "native_step": 1,
-                    "native_unit_of_measurement": None,
-                    "native_value": 3,
-                },
-            )
-        ],
-    )
+    mock_restore_cache(hass, [State(registry_entry.entity_id, "3")])
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
 
@@ -175,8 +161,8 @@ async def test_not_while_an_item_reopened_after_an_announcement_waits(
     with patch.object(
         Announcer, "watching_reopened_item", new_callable=PropertyMock, return_value=True
     ):
-        await set_keep(hass, number_id(hass, entry), 0)
-        await set_keep(hass, number_id(hass, entry), 1)
+        await set_keep(hass, select_id(hass, entry), "0")
+        await set_keep(hass, select_id(hass, entry), "1")
     assert len(kodi.playlist) == 6
     assert "Playlist.Remove" not in kodi.method_calls()
 
@@ -188,9 +174,9 @@ async def test_kodi_errors_are_not_raised(
     play_queue(kodi, 4)
     entry = await setup_better_kodi(hass, kodi_source)
     kodi.offline = True
-    await set_keep(hass, number_id(hass, entry), 1)  # no error for the user
+    await set_keep(hass, select_id(hass, entry), "1")  # no error for the user
     kodi.offline = False
-    assert hass.states.get(number_id(hass, entry)).state == "1"
+    assert hass.states.get(select_id(hass, entry)).state == "1"
     assert len(kodi.playlist) == 6
 
 
@@ -200,7 +186,7 @@ async def test_quick_item_changes_are_combined(
     kodi = fakes[kodi_source.host]
     play_queue(kodi, 0)
     entry = await setup_better_kodi(hass, kodi_source)
-    await set_keep(hass, number_id(hass, entry), 1)
+    await set_keep(hass, select_id(hass, entry), "1")
     data: Any = entry.runtime_data
 
     kodi.position = 4
@@ -210,3 +196,48 @@ async def test_quick_item_changes_are_combined(
     assert names(kodi) == ["d", "e", "f"]
     # One run plus one combined run afterwards, each reading the status once
     assert kodi.method_calls().count("Playlist.Remove") == 3
+
+
+async def test_remove_all_played(
+    hass: HomeAssistant, kodi_source: KodiSource, fakes: dict[str, FakeKodi]
+) -> None:
+    kodi = fakes[kodi_source.host]
+    play_queue(kodi, 3)
+    entry = await setup_better_kodi(hass, kodi_source)
+    await set_keep(hass, select_id(hass, entry), "0")
+    assert names(kodi) == ["d", "e", "f"]
+    assert kodi.position == 0
+
+
+async def test_switched_off_again(
+    hass: HomeAssistant, kodi_source: KodiSource, fakes: dict[str, FakeKodi]
+) -> None:
+    kodi = fakes[kodi_source.host]
+    play_queue(kodi, 0)
+    entry = await setup_better_kodi(hass, kodi_source)
+    entity_id = select_id(hass, entry)
+    await set_keep(hass, entity_id, "1")
+    await set_keep(hass, entity_id, "off")
+    assert hass.states.get(entity_id).state == "off"
+
+    kodi.position = 4
+    entry.runtime_data.schedule_trim()
+    await hass.async_block_till_done()
+    assert len(kodi.playlist) == 6
+
+
+async def test_unknown_restored_state_is_off(
+    hass: HomeAssistant, kodi_source: KodiSource, fakes: dict[str, FakeKodi]
+) -> None:
+    kodi = fakes[kodi_source.host]
+    play_queue(kodi, 5)
+    entry = better_kodi_entry(kodi_source)
+    entry.add_to_hass(hass)
+    registry_entry = er.async_get(hass).async_get_or_create(
+        SELECT_DOMAIN, DOMAIN, f"{entry.entry_id}_{KEEP_PLAYED_KEY}", config_entry=entry
+    )
+    mock_restore_cache(hass, [State(registry_entry.entity_id, "4")])  # not an option
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert hass.states.get(registry_entry.entity_id).state == "off"
+    assert len(kodi.playlist) == 6

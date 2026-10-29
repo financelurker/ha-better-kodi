@@ -50,7 +50,7 @@ from .share import async_setup_share
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = [Platform.MEDIA_PLAYER, Platform.NUMBER]
+PLATFORMS = [Platform.MEDIA_PLAYER, Platform.SELECT]
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 ADDON_CACHE_SECONDS = 600
 ANNOUNCERS = f"{DOMAIN}_announcers"  # per entry, kept across reloads
@@ -80,8 +80,8 @@ class BetterKodiData:
     # When Better Kodi woke Kodi for an announcement (to switch it off again afterwards)
     woken_for_announcement: float | None = None
     uses: int = 0  # counts commands from Home Assistant
-    # Played entries kept in front of the playing one (0: off); set by the number entity
-    keep_played: int = 0
+    # Played entries kept in front of the playing one (None: off); set by the select entity
+    keep_played: int | None = None
     start_task: TaskStarter | None = None
     _trim_task: asyncio.Task[None] | None = field(default=None, init=False, repr=False)
     _trim_again: bool = field(default=False, init=False, repr=False)
@@ -126,11 +126,11 @@ class BetterKodiData:
         self.uses += 1
 
     def schedule_trim(self) -> None:
-        """Remove played queue entries soon, as set by the number entity.
+        """Remove played queue entries soon, as set by the select entity.
 
         Calls while a trim runs are combined into one more run afterwards.
         """
-        if not self.keep_played or self.start_task is None:
+        if self.keep_played is None or self.start_task is None:
             return
         if self._trim_task is not None and not self._trim_task.done():
             self._trim_again = True
@@ -145,14 +145,15 @@ class BetterKodiData:
                 return
 
     async def _async_trim_once(self) -> None:
-        if not self.keep_played or self.announcer.watching_reopened_item:
+        if self.keep_played is None or self.announcer.watching_reopened_item:
             return
         try:
             # Like a command: after announcements, and they wait for it.
             async with self.announcer.command():
-                if self.announcer.watching_reopened_item or not self.keep_played:
-                    return  # an announcement ended meanwhile and reopened an item
-                removed = await self.queue.trim_played(self.keep_played)
+                keep = self.keep_played
+                if keep is None or self.announcer.watching_reopened_item:
+                    return  # switched off, or an announcement reopened an item meanwhile
+                removed = await self.queue.trim_played(keep)
         except KodiError as err:
             _LOGGER.debug("Could not remove played entries from the queue: %s", err)
             return

@@ -42,7 +42,7 @@
         "default": "mdi:broom"
       }
     },
-    "number": {
+    "select": {
       "keep_played": {
         "default": "mdi:playlist-check"
       }
