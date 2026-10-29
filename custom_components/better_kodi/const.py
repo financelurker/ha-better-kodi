@@ -89,6 +89,10 @@ OPTIONAL_KEYS: Final = (*LINK_KEYS, *MAINTENANCE_KEYS, NOTIFY_KEY)
 # Kodi playlist IDs
 VIDEO_PLAYLIST: Final = 1
 
+# Number entity: how many played entries stay in front of the playing one (0: off)
+KEEP_PLAYED_KEY: Final = "keep_played"
+MAX_KEEP_PLAYED: Final = 50
+
 # Media browser
 QUEUE_CONTENT_TYPE: Final = "better_kodi_queue"
 QUEUE_ITEM_CONTENT_TYPE: Final = "better_kodi_queue_item"

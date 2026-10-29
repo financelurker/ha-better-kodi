@@ -66,6 +66,7 @@ class FakeKodi:
         # the order the entries were added in.
         self.music_shuffled = False
         self.video_repeat = "off"  # repeat of the video playlist
+        self.video_shuffled = False
         self._music_added: list[dict[str, Any]] = []
         # Called after Kodi opened a single item (an add-on filling the playlist, say)
         self.after_open_single: Callable[[], None] | None = None
@@ -263,7 +264,7 @@ class FakeKodi:
             "time": dict(self.time),
             "speed": self.speed,
             "repeat": self.music_repeat if self.player_type == "audio" else self.video_repeat,
-            "shuffled": self.music_shuffled if self.player_type == "audio" else False,
+            "shuffled": self.music_shuffled if self.player_type == "audio" else self.video_shuffled,
             "totaltime": _time(0),
         }
         if self._clip is not None:

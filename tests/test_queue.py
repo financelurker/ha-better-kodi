@@ -362,3 +362,66 @@ async def test_queue_covers(kodi: FakeKodi) -> None:
         None,  # placeholder with options
         None,  # not wrapped: not a usable image
     ]
+
+
+D, E = ({"file": f"plugin://x/{name}"} for name in ("d", "e"))
+
+
+@pytest.mark.parametrize(
+    ("position", "keep", "expected", "new_position"),
+    [
+        (4, 2, ["c", "d", "e"], 2),
+        (4, 3, ["b", "c", "d", "e"], 3),
+        (4, 4, ["a", "b", "c", "d", "e"], 4),
+        (4, 9, ["a", "b", "c", "d", "e"], 4),
+        (2, 0, ["c", "d", "e"], 0),
+        (0, 0, ["a", "b", "c", "d", "e"], 0),
+    ],
+)
+async def test_trim_played(
+    kodi: FakeKodi,
+    queue: KodiQueue,
+    position: int,
+    keep: int,
+    expected: list[str],
+    new_position: int,
+) -> None:
+    await start_queue(queue, A, B, C, D, E, position=position)
+    removed = await queue.trim_played(keep)
+    assert kodi.files() == [f"plugin://x/{name}" for name in expected]
+    assert removed == 5 - len(expected)
+    assert kodi.position == new_position
+
+
+@pytest.mark.parametrize(
+    ("attribute", "value"), [("video_shuffled", True), ("video_repeat", "all")]
+)
+async def test_trim_played_not_while_shuffled_or_repeating_all(
+    kodi: FakeKodi, queue: KodiQueue, attribute: str, value: object
+) -> None:
+    await start_queue(queue, A, B, C, D, position=3)
+    setattr(kodi, attribute, value)
+    assert await queue.trim_played(1) == 0
+    assert len(kodi.playlist) == 4
+
+
+async def test_trim_played_with_repeat_one(kodi: FakeKodi, queue: KodiQueue) -> None:
+    await start_queue(queue, A, B, C, position=2)
+    kodi.video_repeat = "one"
+    assert await queue.trim_played(1) == 1
+    assert kodi.files() == [B["file"], C["file"]]
+
+
+async def test_trim_played_not_outside_queue_or_idle(kodi: FakeKodi, queue: KodiQueue) -> None:
+    kodi.playlist = [dict(A), dict(B), dict(C)]
+    assert await queue.trim_played(0) == 0  # nothing plays
+    kodi.play_outside_queue("movie.mkv")
+    assert await queue.trim_played(0) == 0
+    assert len(kodi.playlist) == 3
+
+
+async def test_trim_played_waits_for_queue_changes(kodi: FakeKodi, queue: KodiQueue) -> None:
+    await start_queue(queue, A, B, C, position=2)
+    await asyncio.gather(queue.trim_played(0), queue.enqueue(NEW, EnqueueMode.ADD))
+    assert kodi.files() == [C["file"], NEW["file"]]
+    assert kodi.position == 0

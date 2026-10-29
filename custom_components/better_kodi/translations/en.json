@@ -82,6 +82,12 @@
         "name": "Link"
       }
     },
+    "number": {
+      "keep_played": {
+        "name": "Played entries to keep",
+        "unit_of_measurement": "entries"
+      }
+    },
     "button": {
       "play_now": {
         "name": "Play link now"

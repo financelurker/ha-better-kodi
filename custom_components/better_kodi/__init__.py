@@ -1,6 +1,7 @@
 """Better Kodi: queue, URL casting and handover on top of the Kodi integration."""
 
-from collections.abc import Callable
+import asyncio
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 import logging
 import time
@@ -49,14 +50,16 @@ from .share import async_setup_share
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = [Platform.MEDIA_PLAYER]
+PLATFORMS = [Platform.MEDIA_PLAYER, Platform.NUMBER]
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 ADDON_CACHE_SECONDS = 600
 ANNOUNCERS = f"{DOMAIN}_announcers"  # per entry, kept across reloads
 NOTIFICATIONS = ("Playlist.", "Player.OnPlay", "Player.OnStop", "Player.OnAVStart")
+ITEM_STARTED = ("Player.OnPlay", "Player.OnAVStart")
 
 type BetterKodiConfigEntry = ConfigEntry[BetterKodiData]
 type QueueListener = Callable[[], None]
+type TaskStarter = Callable[[Coroutine[Any, Any, None], str], asyncio.Task[None]]
 
 
 @dataclass
@@ -77,6 +80,11 @@ class BetterKodiData:
     # When Better Kodi woke Kodi for an announcement (to switch it off again afterwards)
     woken_for_announcement: float | None = None
     uses: int = 0  # counts commands from Home Assistant
+    # Played entries kept in front of the playing one (0: off); set by the number entity
+    keep_played: int = 0
+    start_task: TaskStarter | None = None
+    _trim_task: asyncio.Task[None] | None = field(default=None, init=False, repr=False)
+    _trim_again: bool = field(default=False, init=False, repr=False)
 
     @property
     def backend_context(self) -> backends.BackendContext:
@@ -116,6 +124,40 @@ class BetterKodiData:
         """Kodi is used from Home Assistant: don't switch it off after an announcement."""
         self.woken_for_announcement = None
         self.uses += 1
+
+    def schedule_trim(self) -> None:
+        """Remove played queue entries soon, as set by the number entity.
+
+        Calls while a trim runs are combined into one more run afterwards.
+        """
+        if not self.keep_played or self.start_task is None:
+            return
+        if self._trim_task is not None and not self._trim_task.done():
+            self._trim_again = True
+            return
+        self._trim_task = self.start_task(self._async_trim(), f"{DOMAIN} trim queue")
+
+    async def _async_trim(self) -> None:
+        while True:
+            self._trim_again = False
+            await self._async_trim_once()
+            if not self._trim_again:
+                return
+
+    async def _async_trim_once(self) -> None:
+        if not self.keep_played or self.announcer.watching_reopened_item:
+            return
+        try:
+            # Like a command: after announcements, and they wait for it.
+            async with self.announcer.command():
+                if self.announcer.watching_reopened_item or not self.keep_played:
+                    return  # an announcement ended meanwhile and reopened an item
+                removed = await self.queue.trim_played(self.keep_played)
+        except KodiError as err:
+            _LOGGER.debug("Could not remove played entries from the queue: %s", err)
+            return
+        if removed:
+            _LOGGER.debug("Removed %s played entries from the queue", removed)
 
     def notify_queue_changed(self) -> None:
         """Tell listeners (the entity) that the queue may have changed."""
@@ -186,6 +228,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: BetterKodiConfigEntry) -
         announcer=_announcer(hass, entry, client),
         source_entity_id=source_entity_id,
         web_session=web_session,
+        start_task=lambda coro, name: entry.async_create_background_task(hass, coro, name),
     )
     wanted: set[str] = set()
     links, maintenance = (
@@ -210,6 +253,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: BetterKodiConfigEntry) -
         data.announcer.on_notification(method, payload)
         if method.startswith(NOTIFICATIONS):
             data.notify_queue_changed()
+        if method in ITEM_STARTED:
+            data.schedule_trim()
 
     entry.async_create_background_task(
         hass,

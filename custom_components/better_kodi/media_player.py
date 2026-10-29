@@ -189,6 +189,7 @@ class BetterKodiMediaPlayer(MediaPlayerEntity):
         new = self._source_state
         if _playing_item_changed(old, new):
             self._schedule_queue_refresh()
+            self._data.schedule_trim()  # also without Kodi's notifications
         self.async_write_ha_state()
 
     @callback

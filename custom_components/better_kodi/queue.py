@@ -335,6 +335,35 @@ class KodiQueue:
                 "Playlist.Remove", {"playlistid": VIDEO_PLAYLIST, "position": position}
             )
 
+    async def trim_played(self, keep: int) -> int:
+        """Remove played entries in front of the playing one, keeping the last `keep`.
+
+        Played means: in front of the playing entry. Nothing is removed while
+        Kodi shuffles (the order says nothing about what played) or repeats the
+        whole queue (the entries come again). Returns how many were removed.
+        """
+        async with self._lock:
+            status = await self.status()
+            if status.player_id is None or not status.in_queue:
+                return 0
+            assert status.position is not None
+            excess = status.position - keep
+            if excess <= 0:
+                return 0
+            props = await self.client.call(
+                "Player.GetProperties",
+                {"playerid": status.player_id, "properties": ["shuffled", "repeat"]},
+            )
+            if props.get("shuffled") or props.get("repeat") == "all":
+                return 0
+            # Kodi moves its position back by one per removal. It refuses to
+            # remove the playing entry, so a jump back meanwhile stops here.
+            for _ in range(excess):
+                await self.client.call(
+                    "Playlist.Remove", {"playlistid": VIDEO_PLAYLIST, "position": 0}
+                )
+            return excess
+
     async def move(self, position: int, to_position: int) -> None:
         """Move an item to another position by swapping neighbours."""
         async with self._lock:

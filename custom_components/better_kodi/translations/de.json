@@ -82,6 +82,12 @@
         "name": "Link"
       }
     },
+    "number": {
+      "keep_played": {
+        "name": "Gespielte Einträge behalten",
+        "unit_of_measurement": "Einträge"
+      }
+    },
     "button": {
       "play_now": {
         "name": "Link jetzt abspielen"

@@ -57,6 +57,18 @@ If Kodi is playing something that was not started from the queue (for example a 
 
 Library items from the media browser (`movie`, `episode`, `musicvideo`) can be queued by their Kodi ID. Other library items (shows, seasons, channels, directories) are forwarded to the Kodi entity and only support playing now.
 
+### Removing played entries
+
+Kodi keeps played entries in the queue. The number entity *Played entries to keep* (`<entry id>_keep_played`, configuration entity, 0–50, default 0) removes them: with a value N > 0, Better Kodi keeps the last N entries in front of the playing one and removes the older ones. 0 means off, everything stays. A number entity instead of an option, so automations can change it and nothing is reloaded. The value is restored after a restart.
+
+- **Played** means: in front of the playing entry. Skipped entries count as played.
+- **When:** when an entry starts (Kodi's `Player.OnPlay` / `Player.OnAVStart`; without Kodi's WebSocket, when the Kodi entity shows another item), and right after the value is set. Calls while a trim runs are combined into one more run.
+- **How:** `Playlist.Remove` at position 0, once per entry to remove. Kodi moves its position back by one per removal and refuses to remove the playing entry, so a jump back meanwhile stops the trim.
+- Under the queue lock, and like a command: after announcements, which wait for it.
+- **Not** while Kodi shuffles (the order says nothing about what played), repeats the whole queue (the entries come again), plays something outside the queue, plays nothing, or while an item reopened after an announcement waits to be removed (the entries in front of it are the noted queue, not played ones).
+- At the end of the queue nothing is removed: the next `play_media` clears the queue anyway.
+- Errors are logged at debug level; the trim is tried again with the next entry.
+
 ## URL resolvers
 
 A resolver turns a page URL into something Kodi can play. They are tried in order; the first match wins.
